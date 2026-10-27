@@ -1,0 +1,52 @@
+# Model registry. Key = name used on the command line (--model / MODEL=).
+#
+#   hf_repo            Hugging Face repo id (download only)
+#   local_dir          directory under RSX_MODELS_DIR
+#   served_name        name exposed by the vLLM server (requests use it)
+#   hf_exclude         patterns not downloaded (gpt-oss: original/ and metal/ are duplicate weights)
+#   startup_timeout_s  max time to wait for the server /health endpoint
+#   concurrency        number of requests the client keeps in flight
+#   vllm_args          extra `vllm serve` arguments: {flag: value}; true -> bare flag, false/null -> omitted
+#   request            per-request defaults (a template's config.yaml can override them, then the CLI)
+
+gpt-oss-120b:
+  hf_repo: openai/gpt-oss-120b
+  local_dir: gpt-oss-120b
+  served_name: gpt-oss-120b
+  hf_exclude: ["original/*", "metal/*"]
+  startup_timeout_s: 1500
+  concurrency: 256
+  vllm_args:
+    max-model-len: 16384
+    max-num-seqs: 256
+    gpu-memory-utilization: 0.92
+    reasoning-parser: openai_gptoss
+    structured-outputs-config: '{"backend": "xgrammar", "disable_any_whitespace": true}'
+    async-scheduling: true
+    disable-uvicorn-access-log: true
+  request:
+    reasoning_effort: low
+    temperature: 0.0
+    max_tokens: 8192
+    timeout_s: 900
+
+gpt-oss-20b:
+  hf_repo: openai/gpt-oss-20b
+  local_dir: gpt-oss-20b
+  served_name: gpt-oss-20b
+  hf_exclude: ["original/*", "metal/*"]
+  startup_timeout_s: 900
+  concurrency: 256
+  vllm_args:
+    max-model-len: 16384
+    max-num-seqs: 512
+    gpu-memory-utilization: 0.92
+    reasoning-parser: openai_gptoss
+    structured-outputs-config: '{"backend": "xgrammar", "disable_any_whitespace": true}'
+    async-scheduling: true
+    disable-uvicorn-access-log: true
+  request:
+    reasoning_effort: low
+    temperature: 0.0
+    max_tokens: 8192
+    timeout_s: 900
