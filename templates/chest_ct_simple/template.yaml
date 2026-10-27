@@ -1,0 +1,18 @@
+# Minimal example: organ-sectioned chest CT template, mostly free text (RadFields style) plus a few
+# typed leaves. Shows how little is needed for a new template: this file + config.yaml
+# (prompts fall back to templates/_default/).
+technique:
+  contrast: {_type: enum, values: [non_contrast, contrast_enhanced]}
+  slice_thickness_mm: {_type: number}
+lungs:
+  parenchyma: "Findings of the lung parenchyma"
+  nodules: "Lung nodules (number, size, location)"
+  emphysema: {_type: boolean, _hint: "true if emphysema is described, false if explicitly absent"}
+pleura: "Pleural findings (effusion, thickening, pneumothorax)"
+mediastinum:
+  lymph_nodes: "Mediastinal / hilar lymph nodes"
+  heart: "Heart and pericardium"
+  vessels: "Aorta, pulmonary arteries, coronary calcifications"
+upper_abdomen: "Upper abdominal findings"
+bones: "Bone findings"
+impression: "Main conclusion of the report"

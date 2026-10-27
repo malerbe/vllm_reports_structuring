@@ -1,0 +1,161 @@
+# Chest CT (CT-RATE, English), finding-centric.
+# RadFields-compatible YAML + typed leaves (_type). Typed leaves: null = not mentioned in the report.
+# Lists: [] = nothing to report. Keys are emitted in this order (evidence first: grounds the entry).
+#
+# Semantics for downstream use:
+#   negations[]  explicit statements that something is absent / normal (with scope and qualifier)
+#   findings[]   things described as present (status present) or hedged (status uncertain)
+#   anything in neither list is UNKNOWN (not mentioned), never "absent".
+# negations come before findings: the model sorts out the negative / normal sentences first.
+
+_vocab:
+  regions: &regions [lung, airway, pleura, mediastinum, hilum, heart, pericardium, thoracic_aorta,
+    pulmonary_artery, coronary_arteries, other_vessels, esophagus, thyroid, thymus, axilla, breast,
+    chest_wall, bone, liver, gallbladder, spleen, pancreas, adrenal_gland, kidney, stomach,
+    upper_abdomen_other, other]
+  finding_types: &finding_types [
+    # the 18 CT-RATE abnormality labels
+    medical_material, arterial_wall_calcification, cardiomegaly, pericardial_effusion,
+    coronary_artery_wall_calcification, hiatal_hernia, lymphadenopathy, emphysema, atelectasis,
+    lung_nodule, lung_opacity, pulmonary_fibrotic_sequela, pleural_effusion, mosaic_attenuation_pattern,
+    peribronchial_thickening, consolidation, bronchiectasis, interlobular_septal_thickening,
+    # other frequent findings of these reports
+    ground_glass_opacity, reticulation, lung_mass, lung_cyst_or_bulla, pneumothorax, pleural_thickening,
+    pericardial_thickening, lymph_node_not_enlarged, aortic_dilatation, pulmonary_artery_dilatation,
+    airway_abnormality, esophageal_abnormality, thyroid_abnormality, thymic_tissue,
+    breast_or_chest_wall_abnormality, degenerative_spine_changes, fracture, bone_lesion,
+    hepatic_steatosis, liver_lesion, gallbladder_stone, kidney_lesion, kidney_stone,
+    adrenal_lesion, spleen_abnormality, post_surgical_change, other]
+  lobes: &lobes [right_upper_lobe, right_middle_lobe, right_lower_lobe, left_upper_lobe, lingula,
+    left_lower_lobe]
+  sites: &sites [
+    # lung segments (lobe-qualified)
+    RUL_apical, RUL_posterior, RUL_anterior, RML_lateral, RML_medial, RLL_superior, RLL_medial_basal,
+    RLL_anterior_basal, RLL_lateral_basal, RLL_posterior_basal, LUL_apicoposterior, LUL_anterior,
+    LUL_superior_lingular, LUL_inferior_lingular, LLL_superior, LLL_anteromedial_basal,
+    LLL_lateral_basal, LLL_posterior_basal,
+    # lymph node stations
+    supraclavicular, prevascular, paratracheal, precarinal, aortopulmonary_window, subcarinal,
+    paraesophageal, hilar, axillary, internal_mammary, cardiophrenic, retrocrural,
+    # airways and vessels
+    trachea, main_bronchus, ascending_aorta, aortic_arch, descending_aorta, aortic_valve, mitral_valve,
+    left_main_coronary, LAD, LCx, RCA, pulmonary_trunk]
+  laterality: &laterality [right, left, bilateral]
+
+exam:
+  contrast:
+    _type: enum
+    values: [non_contrast, contrast_enhanced]
+    _hint: "From TECHNIQUE ('non-contrast', 'without contrast medium' -> non_contrast)."
+  slice_thickness_mm:
+    _type: number
+    _hint: "Section thickness stated in TECHNIQUE, in mm (e.g. 1.5)."
+  clinical_indication:
+    _type: string
+    _hint: "CLINICAL INFORMATION copied verbatim; null if 'Not given' or empty."
+  comparison_with_prior:
+    _type: boolean
+    _hint: "true if the report compares with a previous examination; null if not mentioned."
+  limited_evaluation_regions:
+    - _type: enum
+      values: *regions
+      _hint: "Regions stated as not optimally evaluable (e.g. 'mediastinum could not be evaluated optimally')."
+
+negations:
+  - evidence: "Verbatim quote of the negating or normal sentence (copy characters exactly)."
+    finding_type: {_type: enum, values: *finding_types, _nullable: false}
+    kind:
+      _type: enum
+      values: [explicit_negation, normal_statement]
+      _nullable: false
+      _hint: "explicit_negation = 'no X', 'X was not detected'; normal_statement = e.g. 'heart size is normal' (only the mappings listed in the instructions)."
+    qualifier:
+      _type: string
+      _hint: "Restricting word if the negation covers only a subset: 'suspicious', 'significant', 'active', 'pathological size'. null if unrestricted."
+    regions:
+      - {_type: enum, values: *regions}
+    laterality: {_type: enum, values: *laterality}
+    sites:
+      - {_type: enum, values: *sites}
+
+findings:
+  - evidence: "Shortest verbatim quote from the report supporting this entry (copy characters exactly)."
+    finding_type:
+      _type: enum
+      values: *finding_types
+      _nullable: false
+      _hint: "See the finding-type glossary. Use other only if nothing fits."
+    name:
+      _type: string
+      _nullable: false
+      _hint: "Short name as worded in the report, e.g. 'ground-glass density increase'."
+    status:
+      _type: enum
+      values: [present, uncertain]
+      _nullable: false
+      _hint: "present = stated as observed; uncertain = the finding itself is hedged ('suspicious for', 'may be', 'cannot be excluded', 'questionable')."
+    region: {_type: enum, values: *regions}
+    laterality: {_type: enum, values: *laterality, _hint: "'both lungs' -> bilateral."}
+    lobes:
+      - {_type: enum, values: *lobes}
+    sites:
+      - _type: enum
+        values: *sites
+        _hint: "Segments (lobe-qualified), lymph node stations, vessel parts. Only if explicitly named."
+    distribution:
+      - _type: enum
+        values: [subpleural, peripheral, central, perihilar, peribronchovascular, centrilobular,
+                 paraseptal, panlobular, fissural, apical, basal, diffuse, focal, patchy]
+    count:
+      _type: enum
+      values: [single, multiple]
+      _hint: "single for 'a/one'; multiple for plural, 'few', 'several', 'multiple', 'numerous'."
+    count_number: {_type: integer, _hint: "Only an explicit number of lesions ('two nodules' -> 2)."}
+    size:
+      _nullable: true
+      _hint: "null unless a numeric measurement is given for this finding. 'millimetric' is NOT a measurement."
+      numbers:
+        - {_type: number, _hint: "Numbers exactly as written, one per dimension: '6x4 mm' -> [6, 4]; '2-3 mm' -> [2, 3]."}
+      unit:
+        _type: enum
+        values: [mm, cm, m, none]
+        _nullable: false
+        _hint: "Unit exactly as written; do NOT convert. none if no unit is written."
+      measure:
+        _type: enum
+        values: [diameter, long_axis, short_axis, thickness, dimensions]
+        _nullable: false
+        _hint: "dimensions = 2-3 numbers like 6x4; thickness e.g. effusion '1 cm in thickness'."
+      qualifier:
+        _type: enum
+        values: [exact, approximately, up_to, less_than, greater_than, range]
+        _nullable: false
+        _hint: "'up to', 'not exceeding' -> up_to; 'less than', 'below' -> less_than; 'a-b mm' -> range."
+      is_largest:
+        _type: boolean
+        _nullable: false
+        _hint: "true if the measurement is of the largest of several lesions ('the largest', 'largest one')."
+    severity:
+      _type: enum
+      values: [minimal, mild, moderate, severe]
+      _hint: "Only from an explicit word: minimal; mild/slight/slightly/minor; moderate; severe/marked/markedly/advanced/extensive/massive. For 'mild-moderate' take the higher grade."
+    change:
+      _type: enum
+      values: [new, increased, decreased, stable, resolved]
+      _hint: "Only if compared with a previous exam ('regressed' -> decreased, 'progressed' -> increased)."
+    descriptors:
+      - {_type: string, _hint: "Short verbatim modifiers: 'ground-glass', 'calcified', 'linear', 'subsegmental', 'millimetric', 'nonspecific', 'crazy paving', 'bullous'."}
+
+impression_diagnoses:
+  - evidence: "Verbatim quote, usually from IMPRESSION."
+    diagnosis: {_type: string, _nullable: false, _hint: "As worded, e.g. 'Covid-19 pneumonia'."}
+    category:
+      _type: enum
+      values: [pneumonia, covid19_pneumonia, other_infection, malignancy, interstitial_lung_disease,
+               copd, heart_failure_or_fluid_overload, post_infectious_sequela, other]
+      _nullable: false
+    certainty:
+      _type: enum
+      values: [definite, probable, possible]
+      _nullable: false
+      _hint: "definite = stated; probable = 'consistent with', 'compatible with', 'in favor of'; possible = 'suspicious for', 'may be', '?', 'cannot be ruled out'."

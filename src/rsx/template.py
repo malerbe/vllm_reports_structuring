@@ -17,7 +17,8 @@ Extensions (keys starting with "_" are reserved):
   ``_type`` is one of enum, number, integer, boolean, string; ``values`` (enum only) lists the
   allowed strings; ``_hint`` is shown to the LLM; ``_nullable`` defaults to true, and null means
   "not mentioned in the report". Inside a list, a typed leaf is not nullable by default.
-* a section may carry ``_hint`` and ``_nullable`` (``_nullable: true`` -> the whole object may be null)
+* a section may carry ``_hint`` and ``_nullable``
+  (``_nullable: true`` -> the whole object may be null)
 * ``_vocab`` at the root is ignored: a place to define YAML anchors reused below.
 
 Every property is required in the JSON schema (constrained decoding always emits every key), so
@@ -35,7 +36,7 @@ import unicodedata
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, create_model
@@ -47,7 +48,15 @@ TYPED_LEAF_KEYS = {"_type", "values", "_hint", "_nullable"}
 SECTION_META_KEYS = {"_hint", "_nullable"}
 ROOT_ONLY_KEYS = {"_vocab"}
 # JSON-schema keywords the generated schema may contain (all supported by xgrammar / guidance).
-PORTABLE_KEYWORDS = {"type", "properties", "required", "additionalProperties", "items", "enum", "anyOf"}
+PORTABLE_KEYWORDS = {
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "items",
+    "enum",
+    "anyOf",
+}
 # German umlauts as transliterated by RadFields (rad_fields.utils.NON_ASCII_CHARS_TRANSCRIPTION).
 _TRANSLIT = {"ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss"}
 _BASEMODEL_ATTRS = set(dir(BaseModel))
@@ -56,7 +65,8 @@ DEFAULT_PROMPTS_DIR = REPO_ROOT / "templates" / "_default"
 
 
 class TemplateError(ValueError):
-    """Malformed template. The message carries the path of the offending node (e.g. $.findings[].size)."""
+    """Malformed template. The message carries the path of the offending node
+    (e.g. $.findings[].size)."""
 
     def __init__(self, message: str, path: str = "$", source: str | Path | None = None):
         where = f"{source}: " if source else ""
@@ -116,7 +126,8 @@ def _parse_typed_leaf(raw: dict, path: str, source, in_list: bool) -> TypedLeaf:
     unknown = set(raw) - TYPED_LEAF_KEYS
     if unknown:
         raise TemplateError(
-            f"unknown key(s) {sorted(map(str, unknown))} in typed leaf; allowed: {sorted(TYPED_LEAF_KEYS)}",
+            f"unknown key(s) {sorted(map(str, unknown))} in typed leaf; "
+            f"allowed: {sorted(TYPED_LEAF_KEYS)}",
             path,
             source,
         )
@@ -137,7 +148,8 @@ def _parse_typed_leaf(raw: dict, path: str, source, in_list: bool) -> TypedLeaf:
         bad = [v for v in values if not isinstance(v, str)]
         if bad:
             raise TemplateError(
-                f"enum values must be strings, got {bad!r} (quote yes/no/on/off/null/numbers in YAML)",
+                f"enum values must be strings, got {bad!r} "
+                "(quote yes/no/on/off/null/numbers in YAML)",
                 path,
                 source,
             )
@@ -150,19 +162,24 @@ def _parse_typed_leaf(raw: dict, path: str, source, in_list: bool) -> TypedLeaf:
     return TypedLeaf(kind=kind, hint=hint, nullable=nullable, values=values)
 
 
-def parse_instructions(raw: Any, path: str = "$", source: str | Path | None = None, in_list: bool = False) -> Node:
+def parse_instructions(
+    raw: Any, path: str = "$", source: str | Path | None = None, in_list: bool = False
+) -> Node:
     """Validate raw YAML data and convert it to the intermediate representation."""
     if isinstance(raw, dict):
         for key in raw:
             if not isinstance(key, str):
                 raise TemplateError(
-                    f"keys must be strings, got {key!r} (YAML turns yes/no/on/off/numbers into non-strings)",
+                    f"keys must be strings, got {key!r} "
+                    "(YAML turns yes/no/on/off/numbers into non-strings)",
                     path,
                     source,
                 )
         if "_type" in raw:
             if path == "$":
-                raise TemplateError("the template root must be a section, not a typed leaf", path, source)
+                raise TemplateError(
+                    "the template root must be a section, not a typed leaf", path, source
+                )
             return _parse_typed_leaf(raw, path, source, in_list)
         reserved = {k for k in raw if k.startswith("_")}
         allowed = SECTION_META_KEYS | (ROOT_ONLY_KEYS if path == "$" else set())
@@ -181,7 +198,9 @@ def parse_instructions(raw: Any, path: str = "$", source: str | Path | None = No
         if not isinstance(nullable, bool):
             raise TemplateError("_nullable must be true or false", path, source)
         fields = {
-            k: parse_instructions(v, f"{path}.{k}", source) for k, v in raw.items() if not k.startswith("_")
+            k: parse_instructions(v, f"{path}.{k}", source)
+            for k, v in raw.items()
+            if not k.startswith("_")
         }
         if not fields:
             raise TemplateError("empty section (no fields)", path, source)
@@ -193,7 +212,8 @@ def parse_instructions(raw: Any, path: str = "$", source: str | Path | None = No
         first = items[0]
         if any(_shape(x) != _shape(first) for x in items[1:]):
             warnings.warn(
-                f"{source or ''}:{path}: list items differ; the first item defines the element type",
+                f"{source or ''}:{path}: list items differ; "
+                "the first item defines the element type",
                 TemplateWarning,
                 stacklevel=2,
             )
@@ -225,7 +245,12 @@ def _ascii(text: str) -> str:
 def to_field_name(key: str) -> str:
     """Python attribute name for a YAML key; the original key stays the JSON name (alias)."""
     name = re.sub(r"[^0-9A-Za-z_]", "_", _ascii(key)) or "field"
-    if name[0].isdigit() or keyword.iskeyword(name) or name in _BASEMODEL_ATTRS or name.startswith("model_"):
+    if (
+        name[0].isdigit()
+        or keyword.iskeyword(name)
+        or name in _BASEMODEL_ATTRS
+        or name.startswith("model_")
+    ):
         name = f"f_{name}"
     return name.lstrip("_") or "field"
 
@@ -245,11 +270,11 @@ def _annotation(node: Node, class_path: str) -> Any:
         }.get(node.kind)
         if node.kind == "enum":
             base = Literal[node.values]  # type: ignore[valid-type]
-        return Optional[base] if node.nullable else base  # noqa: UP007
+        return base | None if node.nullable else base
     if isinstance(node, ListOf):
         return list[_annotation(node.item, f"{class_path}_Item")]
     model = _section_model(node, class_path)
-    return Optional[model] if node.nullable else model  # noqa: UP007
+    return model | None if node.nullable else model
 
 
 def _section_model(section: Section, class_name: str) -> type[BaseModel]:
@@ -283,7 +308,11 @@ def _inline_refs(node: Any, defs: dict[str, Any]) -> Any:
 
 def _clean(node: Any) -> Any:
     if isinstance(node, dict):
-        out = {k: _clean(v) for k, v in node.items() if k not in {"title", "default", "description", "$defs"}}
+        out = {
+            k: _clean(v)
+            for k, v in node.items()
+            if k not in {"title", "default", "description", "$defs"}
+        }
         if out.get("type") == "object" and "properties" in out:
             out["required"] = list(out["properties"])
             out["additionalProperties"] = False
@@ -330,9 +359,12 @@ def _leaf_repr(node: TypedLeaf | TextLeaf) -> str:
     if node.kind == "enum":
         rep = " | ".join(json.dumps(v, ensure_ascii=False) for v in node.values or ())
     else:
-        rep = {"number": "<number>", "integer": "<integer>", "boolean": "true | false", "string": '"<text>"'}[
-            node.kind
-        ]
+        rep = {
+            "number": "<number>",
+            "integer": "<integer>",
+            "boolean": "true | false",
+            "string": '"<text>"',
+        }[node.kind]
     return f"{rep} | null" if node.nullable else rep
 
 
@@ -343,17 +375,25 @@ def render_reader_view(root: Section) -> str:
     def emit(node: Node, indent: int, prefix: str, comma: str) -> None:
         pad = "  " * indent
         if isinstance(node, Section):
-            notes = [n for n in (node.hint, "object or null" if node.nullable else "") if n]
+            notes = [
+                n for n in (node.hint.rstrip(". "), "object or null" if node.nullable else "") if n
+            ]
             comment = f"  // {'; '.join(notes)}" if notes else ""
             lines.append(f"{pad}{prefix}{{{comment}")
             items = list(node.fields.items())
             for i, (key, child) in enumerate(items):
-                emit(child, indent + 1, f"{json.dumps(key, ensure_ascii=False)}: ", "," if i < len(items) - 1 else "")
+                emit(
+                    child,
+                    indent + 1,
+                    f"{json.dumps(key, ensure_ascii=False)}: ",
+                    "," if i < len(items) - 1 else "",
+                )
             lines.append(f"{pad}}}{comma}")
         elif isinstance(node, ListOf):
             item = node.item
             if isinstance(item, (TextLeaf, TypedLeaf)):
-                comment = f"  // list, may be empty{'; ' + item.hint if item.hint and isinstance(item, TypedLeaf) else ''}"
+                hint = item.hint if isinstance(item, TypedLeaf) and item.hint else ""
+                comment = f"  // list, may be empty{'; ' + hint if hint else ''}"
                 lines.append(f"{pad}{prefix}[{_leaf_repr(item)}, ...]{comma}{comment}")
             else:
                 lines.append(f"{pad}{prefix}[  // list, one object per entry, may be empty")
@@ -382,7 +422,7 @@ def render_reader_view_radfields(raw: Any) -> str:
 
 
 def field_catalog(root: Section) -> list[dict[str, Any]]:
-    """Flat list of leaves: path, kind, values, nullable, hint (documentation, export, QA generators)."""
+    """Flat list of leaves: path, kind, values, nullable, hint (docs, export, downstream)."""
     out: list[dict[str, Any]] = []
 
     def walk(node: Node, path: str) -> None:
@@ -393,11 +433,18 @@ def field_catalog(root: Section) -> list[dict[str, Any]]:
             walk(node.item, f"{path}[]")
         elif isinstance(node, TypedLeaf):
             out.append(
-                {"path": path, "kind": node.kind, "values": list(node.values or []), "nullable": node.nullable,
-                 "hint": node.hint}
+                {
+                    "path": path,
+                    "kind": node.kind,
+                    "values": list(node.values or []),
+                    "nullable": node.nullable,
+                    "hint": node.hint,
+                }
             )
         else:
-            out.append({"path": path, "kind": "text", "values": [], "nullable": False, "hint": node.hint})
+            out.append(
+                {"path": path, "kind": "text", "values": [], "nullable": False, "hint": node.hint}
+            )
 
     walk(root, "")
     return out
@@ -418,7 +465,9 @@ class TemplateConfig(BaseModel):
     reader_view_style: Literal["annotated", "radfields"] = "annotated"
     feeder: str | None = None  # default feeder (--feeder overrides)
     feeder_options: dict[str, Any] = Field(default_factory=dict)
-    request: dict[str, Any] = Field(default_factory=dict)  # overrides of the model's request defaults
+    request: dict[str, Any] = Field(
+        default_factory=dict
+    )  # overrides of the model's request defaults
     evidence_fields: list[str] = Field(default_factory=lambda: ["evidence"])  # key names, any depth
     export_tables: dict[str, str] = Field(default_factory=dict)  # table name -> top-level list key
     postprocess: str | None = None  # python file in the template folder (see export.py)
@@ -441,9 +490,13 @@ class Template:
     warnings: list[str] = field(default_factory=list)
 
     def render_messages(self, report_text: str) -> list[dict[str, str]]:
-        """System message identical for every report (prefix caching); the report goes in the user message."""
+        """The system message is identical for every report (prefix caching);
+        the report goes in the user message."""
         user = self.user_prompt.replace("{{report}}", report_text)
-        return [{"role": "system", "content": self.system_prompt}, {"role": "user", "content": user}]
+        return [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": user},
+        ]
 
     def postprocess_path(self) -> Path | None:
         return self.files.get("postprocess")
@@ -467,15 +520,19 @@ _SNAPSHOT_NAMES = {
 
 
 def resolve_template(ref: str | Path, templates_dir: Path) -> Path:
-    """A name under templates/, a template folder, or a single YAML file (pure RadFields template)."""
+    """A name under templates/, a template folder, or a single YAML file (RadFields template)."""
     p = Path(ref).expanduser()
     if p.exists():
         return p.resolve()
     candidate = templates_dir / str(ref)
     if candidate.is_dir():
         return candidate.resolve()
-    known = sorted(d.name for d in templates_dir.iterdir() if d.is_dir() and not d.name.startswith("_"))
-    raise FileNotFoundError(f"template {ref!r} not found (neither a path nor templates/{ref}); known: {known}")
+    known = sorted(
+        d.name for d in templates_dir.iterdir() if d.is_dir() and not d.name.startswith("_")
+    )
+    raise FileNotFoundError(
+        f"template {ref!r} not found (neither a path nor templates/{ref}); known: {known}"
+    )
 
 
 def _fill(text: str, values: dict[str, str]) -> str:
@@ -507,7 +564,9 @@ def load_template(ref: str | Path, templates_dir: Path | None = None) -> Templat
     if folder and (folder / "config.yaml").is_file():
         files["config"] = folder / "config.yaml"
         try:
-            config = TemplateConfig.model_validate(yaml.safe_load(files["config"].read_text()) or {})
+            config = TemplateConfig.model_validate(
+                yaml.safe_load(files["config"].read_text()) or {}
+            )
         except Exception as e:  # pydantic.ValidationError -> readable message
             raise TemplateError(f"invalid config.yaml: {e}", source=files["config"]) from e
     if config.postprocess:
@@ -534,14 +593,22 @@ def load_template(ref: str | Path, templates_dir: Path | None = None) -> Templat
     schema = vllm_json_schema(model)
     problems = check_schema_portability(schema)
     if problems:
-        raise TemplateError(f"schema uses non-portable keywords: {problems[:10]}", source=files["template"])
+        raise TemplateError(
+            f"schema uses non-portable keywords: {problems[:10]}", source=files["template"]
+        )
 
-    reader_view = render_reader_view(root) if config.reader_view_style == "annotated" else render_reader_view_radfields(raw)
+    reader_view = (
+        render_reader_view(root)
+        if config.reader_view_style == "annotated"
+        else render_reader_view_radfields(raw)
+    )
     values = {"reader_view": reader_view, "missing_value": config.missing_value}
     system_prompt = _fill(files["system_prompt"].read_text(), values).strip() + "\n"
     user_prompt = _fill(files["user_prompt"].read_text(), values).strip() + "\n"
     if "{{report}}" not in user_prompt:
-        raise TemplateError("user prompt must contain the {{report}} placeholder", source=files["user_prompt"])
+        raise TemplateError(
+            "user prompt must contain the {{report}} placeholder", source=files["user_prompt"]
+        )
 
     tmpl = Template(
         name=name,

@@ -1,0 +1,3 @@
+description: "Minimal organ-sectioned example template (free text + a few typed fields)."
+feeder: ct_rate
+missing_value: "not mentioned"

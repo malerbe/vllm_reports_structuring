@@ -100,7 +100,10 @@ class Paths:
 
 
 def load_paths(env_file: str | Path | None = None) -> Paths:
-    """Load configs/paths.env (or $RSX_PATHS); variables already in the environment take precedence."""
+    """Load configs/paths.env (or $RSX_PATHS).
+
+    Variables already set in the environment take precedence over the file.
+    """
     path = Path(env_file or os.environ.get("RSX_PATHS") or DEFAULT_ENV_FILE)
     v = parse_env_file(path)
     cache = v.get("RSX_VLLM_CACHE", "")

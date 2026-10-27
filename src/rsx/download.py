@@ -58,7 +58,9 @@ def download_model(spec: ModelSpec, models_dir: Path) -> Path:
     if target.is_dir() and not check_model_dir(target):
         log.info("%s: already complete in %s", spec.name, target)
         return target
-    log.info("%s: downloading %s -> %s (exclude %s)", spec.name, spec.hf_repo, target, spec.hf_exclude)
+    log.info(
+        "%s: downloading %s -> %s (exclude %s)", spec.name, spec.hf_repo, target, spec.hf_exclude
+    )
     snapshot_download(
         repo_id=spec.hf_repo,
         local_dir=str(target),
@@ -91,7 +93,9 @@ def download_tiktoken(dest: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s | %(message)s", datefmt="%H:%M:%S"
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s | %(message)s",
+        datefmt="%H:%M:%S",
     )
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("models", nargs="*", help="model names from configs/models.yaml (default: all)")
@@ -111,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         spec = registry[name]
         if args.check:
             problems = check_model_dir(spec.model_path(paths.models_dir))
-            print(f"{name}: {'OK' if not problems else problems}")
+            print(f"{name}: {problems if problems else 'OK'}")
             status |= bool(problems)
         else:
             download_model(spec, paths.models_dir)

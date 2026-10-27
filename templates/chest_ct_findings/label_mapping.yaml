@@ -1,0 +1,21 @@
+# finding_type -> CT-RATE abnormality label (multi_abnormality_labels / predicted labels columns).
+# Documentation for downstream use (e.g. checking agreement with the 18 CT-RATE labels).
+medical_material: Medical material
+arterial_wall_calcification: Arterial wall calcification
+cardiomegaly: Cardiomegaly
+pericardial_effusion: Pericardial effusion
+coronary_artery_wall_calcification: Coronary artery wall calcification
+hiatal_hernia: Hiatal hernia
+lymphadenopathy: Lymphadenopathy
+emphysema: Emphysema
+atelectasis: Atelectasis
+lung_nodule: Lung nodule
+lung_opacity: Lung opacity
+ground_glass_opacity: Lung opacity
+pulmonary_fibrotic_sequela: Pulmonary fibrotic sequela
+pleural_effusion: Pleural effusion
+mosaic_attenuation_pattern: Mosaic attenuation pattern
+peribronchial_thickening: Peribronchial thickening
+consolidation: Consolidation
+bronchiectasis: Bronchiectasis
+interlobular_septal_thickening: Interlobular septal thickening

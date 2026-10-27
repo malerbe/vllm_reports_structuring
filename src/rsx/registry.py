@@ -48,6 +48,7 @@ class ModelSpec(BaseModel):
     startup_timeout_s: float = 1200.0
     concurrency: int = 128
     vllm_args: dict[str, Any] = Field(default_factory=dict)
+    vllm_env: dict[str, Any] = Field(default_factory=dict)  # extra env inside the container
     request: RequestDefaults = Field(default_factory=RequestDefaults)
 
     def model_path(self, models_dir: Path) -> Path:

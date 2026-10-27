@@ -1,0 +1,13 @@
+# Optional per-template settings (every key optional; see README "Writing a template").
+description: "Finding-centric chest CT template for CT-RATE English reports (findings, negations, diagnoses)."
+feeder: ct_rate            # default dataset reader (--feeder overrides)
+feeder_options: {}
+missing_value: "not mentioned"
+reader_view_style: annotated
+request: {}                # overrides of configs/models.yaml request defaults (temperature, max_tokens...)
+evidence_fields: [evidence]
+export_tables:             # table name -> top-level list of the template
+  findings: findings
+  negations: negations
+  diagnoses: impression_diagnoses
+postprocess: postprocess.py
