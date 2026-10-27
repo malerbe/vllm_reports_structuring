@@ -125,6 +125,9 @@ def build_tables(
     dfs = {name: pd.DataFrame(rows) for name, rows in tables.items()}
     # rows of one member (e.g. one VolumeName) together, items in extraction order
     for name, df in dfs.items():
+        # a null section (e.g. size: null) leaves an all-null "size" column next to "size.*"
+        stubs = [c for c in df.columns if any(o.startswith(f"{c}.") for o in df.columns)]
+        df = df.drop(columns=[c for c in stubs if df[c].isna().all()])
         keys = [k for k in (member_column, "item_idx") if k in df.columns]
         if keys:
             dfs[name] = df.sort_values(keys, kind="stable").reset_index(drop=True)
