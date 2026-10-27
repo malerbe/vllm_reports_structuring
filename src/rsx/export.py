@@ -123,6 +123,11 @@ def build_tables(
                     )
 
     dfs = {name: pd.DataFrame(rows) for name, rows in tables.items()}
+    # rows of one member (e.g. one VolumeName) together, items in extraction order
+    for name, df in dfs.items():
+        keys = [k for k in (member_column, "item_idx") if k in df.columns]
+        if keys:
+            dfs[name] = df.sort_values(keys, kind="stable").reset_index(drop=True)
     post = load_postprocess(template)
     if post:
         dfs = {name: post(name, df) for name, df in dfs.items()}
