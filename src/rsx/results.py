@@ -153,6 +153,26 @@ def pending_units(
     return out
 
 
+class MetaLock:
+    """Short blocking lock shared by all shards of a run (snapshot, run.yaml, final export)."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self._fd: int | None = None
+
+    def __enter__(self) -> MetaLock:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(self._fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._fd is not None:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+            os.close(self._fd)
+            self._fd = None
+
+
 class RunLock:
     """Exclusive non-blocking lock so two jobs never write the same results file."""
 

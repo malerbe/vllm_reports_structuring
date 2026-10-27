@@ -6,6 +6,7 @@ Resume-safe: rerunning the same command only processes what is not done yet.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -27,6 +28,7 @@ from .feeders import ReportFeeder, make_feeder, parse_feeder_options
 from .paths import Paths
 from .registry import ModelSpec, RequestDefaults, get_model
 from .results import (
+    MetaLock,
     ResultsWriter,
     RunLock,
     latest_records,
@@ -57,6 +59,7 @@ class Prepared:
     spec: ModelSpec
     feeder: ReportFeeder
     units: list[WorkUnit]  # after shard + selection
+    all_units: list[WorkUnit]  # whole input (export completeness check with shards)
     n_total: int  # all units of the input
     run_dir: Path
     results_path: Path
@@ -66,14 +69,29 @@ class Prepared:
 
 
 def _shards(args) -> tuple[int, int]:
+    """(num_shards, shard_id) from --num-shards/--shard-id, else from the Slurm array.
+
+    Without --num-shards the array must be 0..N-1 (as `rsx submit --array N` creates). To rerun a
+    single shard: `sbatch --array=2 ... --num-shards 4` (the array index is then the shard id).
+    """
+    env = os.environ
+    in_array = bool(env.get("SLURM_ARRAY_TASK_ID") and env.get("SLURM_ARRAY_TASK_COUNT"))
+    if args.shard_id is not None and not args.num_shards:
+        raise ValueError("--shard-id needs --num-shards")
     if args.num_shards:
-        return args.num_shards, args.shard_id or 0
-    if os.environ.get("SLURM_ARRAY_TASK_ID") and os.environ.get("SLURM_ARRAY_TASK_COUNT"):
-        task = int(os.environ["SLURM_ARRAY_TASK_ID"]) - int(
-            os.environ.get("SLURM_ARRAY_TASK_MIN", "0")
+        if args.shard_id is not None:
+            return args.num_shards, args.shard_id
+        return args.num_shards, int(env["SLURM_ARRAY_TASK_ID"]) if in_array else 0
+    if not in_array:
+        return 1, 0
+    count = int(env["SLURM_ARRAY_TASK_COUNT"])
+    lo = int(env.get("SLURM_ARRAY_TASK_MIN", "0"))
+    hi = int(env.get("SLURM_ARRAY_TASK_MAX", str(lo + count - 1)))
+    if lo != 0 or hi - lo + 1 != count:
+        raise ValueError(
+            f"Slurm array {lo}-{hi} (count {count}) is not 0..N-1: pass --num-shards explicitly"
         )
-        return int(os.environ["SLURM_ARRAY_TASK_COUNT"]), task
-    return 1, 0
+    return count, int(env["SLURM_ARRAY_TASK_ID"])
 
 
 def request_overrides(args) -> dict[str, Any]:
@@ -110,6 +128,7 @@ def prepare(args, paths: Paths) -> Prepared:
         spec,
         feeder,
         units,
+        all_units,
         len(all_units),
         run_dir,
         run_dir / results_filename(num_shards, shard_id),
@@ -132,9 +151,33 @@ def _gpu_info() -> list[str]:
         return []
 
 
+def _write_atomic(path: Path, text: str) -> None:
+    tmp = path.with_name(f".{path.name}.tmp{os.getpid()}")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
+def _snapshot_template(prep: Prepared) -> None:
+    """Copy the template into run_dir/template unless the same version is already there.
+    The new snapshot is written aside and swapped in, so readers never see a partial one."""
+    snap = prep.run_dir / "template"
+    stamp = snap / ".template_hash"
+    if stamp.is_file() and stamp.read_text().strip() == prep.template.hash:
+        return
+    tmp = prep.run_dir / f".template.tmp{os.getpid()}"
+    shutil.rmtree(tmp, ignore_errors=True)
+    prep.template.snapshot(tmp)
+    (tmp / ".template_hash").write_text(prep.template.hash + "\n")
+    old = prep.run_dir / f".template.old{os.getpid()}"
+    if snap.exists():
+        snap.rename(old)
+    tmp.rename(snap)
+    shutil.rmtree(old, ignore_errors=True)
+
+
 def _update_run_yaml(prep: Prepared, args, job_id: str) -> None:
     path = prep.run_dir / "run.yaml"
-    info = yaml.safe_load(path.read_text()) if path.exists() else {}
+    info = (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
     info.setdefault("created", datetime.now().isoformat(timespec="seconds"))
     info.update(
         {
@@ -159,7 +202,7 @@ def _update_run_yaml(prep: Prepared, args, job_id: str) -> None:
             "selected_units": len(prep.units),
         }
     )
-    path.write_text(yaml.safe_dump(info, sort_keys=False, allow_unicode=True))
+    _write_atomic(path, yaml.safe_dump(info, sort_keys=False, allow_unicode=True))
 
 
 class _StopFlag:
@@ -180,8 +223,11 @@ class _StopFlag:
                 signal.Signals(signum).name,
             )
         self.set_ = True
-        if self.event is not None and self.loop is not None:
-            self.loop.call_soon_threadsafe(self.event.set)
+        loop, event = self.loop, self.event
+        if event is not None and loop is not None and not loop.is_closed():
+            # the loop may close between the check and the call
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(event.set)
 
     def install(self) -> None:
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGUSR1):
@@ -209,11 +255,10 @@ def run_job(args, paths: Paths, *, connect: dict[str, Any] | None = None) -> int
             retry_failed=not args.no_retry_failed,
             allow_template_change=args.allow_template_change,
         )
-        snap = prep.run_dir / "template"
-        if snap.exists():
-            shutil.rmtree(snap)
-        prep.template.snapshot(snap)
-        _update_run_yaml(prep, args, job_id)
+        # shared by all shards of the run: short blocking lock (the shard lock is per shard)
+        with MetaLock(prep.run_dir / ".lock.meta"):
+            _snapshot_template(prep)
+            _update_run_yaml(prep, args, job_id)
         log.info("run dir %s", prep.run_dir)
         log.info(
             "input %s: %d units (%d selected for shard %d/%d), %d already done, %d pending",
@@ -225,97 +270,108 @@ def run_job(args, paths: Paths, *, connect: dict[str, Any] | None = None) -> int
             len(prep.units) - len(pending),
             len(pending),
         )
-        if not pending:
+        if pending:
+            code = _process(prep, pending, args, paths, connect, job_id, stop)
+        else:
             log.info("nothing to do")
-            if args.then_export:
-                _export(prep.run_dir)
-            return EXIT_OK
+            code = EXIT_OK
+    if args.then_export:
+        _export_if_complete(prep)
+    return code
 
-        job_dir = prep.run_dir / "jobs" / job_id
-        job_dir.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(job_dir / "client.log")
-        fh.setFormatter(logging.Formatter(LOG_FORMAT, "%H:%M:%S"))
-        logging.getLogger().addHandler(fh)
 
-        server: VllmServer | None = None
-        env_info: dict[str, Any] = {
-            "job_id": job_id,
-            "host": socket.gethostname(),
-            "gpus": _gpu_info(),
-            "sif": str(paths.sif),
-            "model": prep.spec.name,
-            "args": vars(args),
-        }
-        t_job = time.monotonic()
-        try:
-            if connect is None:
-                server = VllmServer(paths, prep.spec, job_id=os.environ.get("SLURM_JOB_ID"))
-                server.start(job_dir / "vllm.log")
-                try:
-                    server.wait_ready(stop=stop)
-                except (ServerDiedError, ServerTimeoutError) as e:
-                    log.error("vLLM server failed: %s", e)
-                    return EXIT_REMAINING if stop() else EXIT_SERVER
-                info = server.info()
-                connect = {
-                    "base_url": server.base_url,
-                    "api_key": server.api_key,
-                    "served_name": prep.spec.served_name,
-                    "vllm_version": info.get("vllm_version"),
-                }
-                env_info["server"] = info
-            env_info["connect"] = {k: v for k, v in connect.items() if k != "api_key"}
-            (job_dir / "environment.json").write_text(json.dumps(env_info, indent=2, default=str))
-            log.info(
-                "vLLM %s at %s, %d pending units, concurrency %d",
-                connect.get("vllm_version"),
-                connect["base_url"],
-                len(pending),
+def _process(
+    prep: Prepared,
+    pending: list[WorkUnit],
+    args,
+    paths: Paths,
+    connect: dict[str, Any] | None,
+    job_id: str,
+    stop: _StopFlag,
+) -> int:
+    """Start / connect to the server and process the pending units (run lock held)."""
+    job_dir = prep.run_dir / "jobs" / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    fh = logging.FileHandler(job_dir / "client.log")
+    fh.setFormatter(logging.Formatter(LOG_FORMAT, "%H:%M:%S"))
+    logging.getLogger().addHandler(fh)
+
+    server: VllmServer | None = None
+    env_info: dict[str, Any] = {
+        "job_id": job_id,
+        "host": socket.gethostname(),
+        "gpus": _gpu_info(),
+        "sif": str(paths.sif),
+        "model": prep.spec.name,
+        "args": {k: ("***" if k == "api_key" and v else v) for k, v in vars(args).items()},
+    }
+    t_job = time.monotonic()
+    try:
+        if connect is None:
+            server = VllmServer(paths, prep.spec, job_id=os.environ.get("SLURM_JOB_ID"))
+            server.start(job_dir / "vllm.log")
+            try:
+                server.wait_ready(stop=stop)
+            except (ServerDiedError, ServerTimeoutError) as e:
+                log.error("vLLM server failed: %s", e)
+                return EXIT_REMAINING if stop() else EXIT_SERVER
+            info = server.info()
+            connect = {
+                "base_url": server.base_url,
+                "api_key": server.api_key,
+                "served_name": prep.spec.served_name,
+                "vllm_version": info.get("vllm_version"),
+            }
+            env_info["server"] = info
+        env_info["connect"] = {k: v for k, v in connect.items() if k != "api_key"}
+        (job_dir / "environment.json").write_text(json.dumps(env_info, indent=2, default=str))
+        log.info(
+            "vLLM %s at %s, %d pending units, concurrency %d",
+            connect.get("vllm_version"),
+            connect["base_url"],
+            len(pending),
+            args.concurrency or prep.spec.concurrency,
+        )
+        outcome, progress = asyncio.run(
+            _run_async(
+                prep,
+                pending,
+                connect,
+                args,
+                job_id,
+                stop,
                 args.concurrency or prep.spec.concurrency,
             )
-            outcome, progress = asyncio.run(
-                _run_async(
-                    prep,
-                    pending,
-                    connect,
-                    args,
-                    job_id,
-                    stop,
-                    args.concurrency or prep.spec.concurrency,
-                )
-            )
-        finally:
-            if server is not None:
-                server.stop()
-            logging.getLogger().removeHandler(fh)
-            fh.close()
-
-        remaining = pending_units(
-            prep.units,
-            latest_records(prep.run_dir),
-            template_hash=prep.template.hash,
-            retry_failed=False,
-            allow_template_change=True,
         )
-        stats = {
-            "job_id": job_id,
-            "wall_s": round(time.monotonic() - t_job, 1),
-            "server_startup_s": server.startup_s if server else None,
-            "progress": progress.summary(),
-            "outcome": outcome.__dict__,
-            "remaining_units": len(remaining),
-            "run_summary": summarize(latest_records(prep.run_dir).values()),
-        }
-        (job_dir / "stats.json").write_text(json.dumps(stats, indent=2, default=str))
-        log.info(
-            "job done: %s | remaining %d | %s",
-            outcome.by_status,
-            len(remaining),
-            progress.summary(),
-        )
+    finally:
+        if server is not None:
+            server.stop()
+        logging.getLogger().removeHandler(fh)
+        fh.close()
 
-    if args.then_export:
-        _export(prep.run_dir)
+    remaining = pending_units(
+        prep.units,
+        latest_records(prep.run_dir),
+        template_hash=prep.template.hash,
+        retry_failed=False,
+        allow_template_change=True,
+    )
+    stats = {
+        "job_id": job_id,
+        "wall_s": round(time.monotonic() - t_job, 1),
+        "server_startup_s": server.startup_s if server else None,
+        "progress": progress.summary(),
+        "outcome": outcome.__dict__,
+        "remaining_units": len(remaining),
+        "run_summary": summarize(latest_records(prep.run_dir).values()),
+    }
+    (job_dir / "stats.json").write_text(json.dumps(stats, indent=2, default=str))
+    log.info(
+        "job done: %s | remaining %d | %s",
+        outcome.by_status,
+        len(remaining),
+        progress.summary(),
+    )
     if outcome.breaker or outcome.fatal:
         return EXIT_BREAKER
     return EXIT_REMAINING if remaining else EXIT_OK
@@ -335,6 +391,13 @@ async def _run_async(
     stop.event, stop.loop = event, loop
     if stop():
         event.set()
+    try:
+        return await _extract(prep, pending, connect, args, job_id, event, concurrency)
+    finally:
+        stop.event = stop.loop = None
+
+
+async def _extract(prep, pending, connect, args, job_id, event, concurrency):
     client = make_client(
         connect["base_url"], connect["api_key"], concurrency, prep.params.timeout_s
     )
@@ -364,6 +427,33 @@ async def _run_async(
         await client.close()
     progress.log()
     return outcome, progress
+
+
+def _export_if_complete(prep: Prepared) -> None:
+    """With shards, only the shard that sees the whole run done exports (under the meta lock)."""
+    if prep.num_shards > 1:
+        with MetaLock(prep.run_dir / ".lock.meta"):
+            missing = _units_not_done_in_any_shard(prep)
+            if missing:
+                log.info(
+                    "--then-export: %d units of other shards not done yet, skipping export "
+                    "(the last shard to finish exports)",
+                    missing,
+                )
+                return
+            _export(prep.run_dir)
+    else:
+        _export(prep.run_dir)
+
+
+def _units_not_done_in_any_shard(prep: Prepared) -> int:
+    records = latest_records(prep.run_dir)
+    all_ids = {
+        u.id
+        for i in range(prep.num_shards)
+        for u in shard_units(prep.all_units, prep.num_shards, i)
+    }
+    return sum(1 for uid in all_ids if uid not in records)
 
 
 def _export(run_dir: Path) -> None:

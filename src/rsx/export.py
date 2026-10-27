@@ -18,6 +18,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -69,7 +70,20 @@ def load_postprocess(template: Template):
 
 def run_info(run_dir: Path) -> dict[str, Any]:
     path = run_dir / "run.yaml"
-    return yaml.safe_load(path.read_text()) if path.exists() else {}
+    return (yaml.safe_load(path.read_text()) if path.exists() else None) or {}
+
+
+def _guard(row: dict[str, Any], reserved: set[str], where: str) -> dict[str, Any]:
+    """Template fields never overwrite bookkeeping columns: a clash is renamed <name>__field."""
+    clash = reserved & set(row)
+    if not clash:
+        return row
+    log.warning(
+        "%s: template field(s) %s renamed to <name>__field (reserved column names)",
+        where,
+        sorted(clash),
+    )
+    return {(f"{k}__field" if k in clash else k): v for k, v in row.items()}
 
 
 def build_tables(
@@ -86,23 +100,23 @@ def build_tables(
         scalars = flatten(
             {k: v for k, v in parsed.items() if k not in template.config.export_tables.values()}
         )
-        base = {"unit_id": rec.id, "status": rec.status}
+        counts = {f"n_{k}": len(v) for k, v in parsed.items() if isinstance(v, list)}
+        base = {
+            "unit_id": rec.id,
+            "status": rec.status,
+            "attempts": rec.attempts,
+            "error": rec.error,
+            **counts,
+        }
+        scalars = _guard(scalars, {member_column, *base}, "reports")
         for m in members:
-            tables["reports"].append(
-                {
-                    member_column: m,
-                    **base,
-                    "attempts": rec.attempts,
-                    "error": rec.error,
-                    **{f"n_{k}": len(v) for k, v in parsed.items() if isinstance(v, list)},
-                    **scalars,
-                }
-            )
+            tables["reports"].append({member_column: m, **base, **scalars})
         for name, key in template.config.export_tables.items():
             items = parsed.get(key) or []
             for idx, item in enumerate(items):
                 row = flatten(item) if isinstance(item, dict) else {key: item}
                 row.update(_evidence_columns(row, rec.text, fields))
+                row = _guard(row, {member_column, "unit_id", "item_idx"}, name)
                 for m in members:
                     tables[name].append(
                         {member_column: m, "unit_id": rec.id, "item_idx": idx, **row}
@@ -116,6 +130,9 @@ def build_tables(
 
 
 def evidence_rates(df: pd.DataFrame) -> dict[str, Any]:
+    """Evidence match rates per extracted item (not weighted by the number of members)."""
+    if {"unit_id", "item_idx"} <= set(df.columns):
+        df = df.drop_duplicates(["unit_id", "item_idx"])
     out = {}
     for col in df.columns:
         if col.endswith("_normalized"):
@@ -135,7 +152,7 @@ def export_run(
 ) -> dict[str, Path]:
     run_dir = Path(run_dir)
     info = run_info(run_dir)
-    template = load_template(run_dir / "template")
+    template = load_template(run_dir / "template", name=info.get("template"))
     member_column = info.get("member_column", "id")
     records = list(latest_records(run_dir).values())
     if not records:
@@ -148,10 +165,12 @@ def export_run(
     for name, df in dfs.items():
         for fmt in formats:
             path = out_dir / f"{name}.{fmt}"
+            tmp = path.with_name(f".{path.name}.tmp{os.getpid()}")
             if fmt == "parquet":
-                df.to_parquet(path, index=False)
+                df.to_parquet(tmp, index=False)
             else:
-                df.to_csv(path, index=False)
+                df.to_csv(tmp, index=False)
+            os.replace(tmp, path)  # readers never see a half-written file
             written[f"{name}.{fmt}"] = path
 
     failures = [
@@ -168,7 +187,8 @@ def export_run(
     ]
     pd.DataFrame(
         failures, columns=["unit_id", "keys", "status", "error", "finish_reason", "raw"]
-    ).to_csv(out_dir / "failures.csv", index=False)
+    ).to_csv(out_dir / ".failures.csv.tmp", index=False)
+    os.replace(out_dir / ".failures.csv.tmp", out_dir / "failures.csv")
     written["failures.csv"] = out_dir / "failures.csv"
 
     summary = summarize(records)
@@ -178,7 +198,8 @@ def export_run(
     }
     summary["template"] = template.name
     summary["template_hash_now"] = template.hash
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    (out_dir / ".summary.json.tmp").write_text(json.dumps(summary, indent=2))
+    os.replace(out_dir / ".summary.json.tmp", out_dir / "summary.json")
     written["summary.json"] = out_dir / "summary.json"
     log.info("exported %s: %s", run_dir, {k: v for k, v in summary["tables"].items()})
     return written

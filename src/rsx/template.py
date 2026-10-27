@@ -306,28 +306,45 @@ def _inline_refs(node: Any, defs: dict[str, Any]) -> Any:
     return node
 
 
+_ANNOTATION_KEYS = {"title", "default", "description", "$defs"}
+
+
 def _clean(node: Any) -> Any:
-    if isinstance(node, dict):
-        out = {
-            k: _clean(v)
-            for k, v in node.items()
-            if k not in {"title", "default", "description", "$defs"}
-        }
-        if out.get("type") == "object" and "properties" in out:
-            out["required"] = list(out["properties"])
-            out["additionalProperties"] = False
-        # Pydantic emits Literal[...] as {"enum": [...], "type": "string"}; keep as is.
-        return out
+    """Strip annotations from schema nodes (never from property names), make every property
+    required, forbid extra keys, and write single-value enums (Pydantic: const) as enum."""
     if isinstance(node, list):
         return [_clean(x) for x in node]
-    return node
+    if not isinstance(node, dict):
+        return node
+    out: dict[str, Any] = {}
+    for k, v in node.items():
+        if k == "properties":
+            out[k] = {name: _clean(sub) for name, sub in v.items()}
+        elif k == "const":
+            out["enum"] = [v]
+        elif k not in _ANNOTATION_KEYS:
+            out[k] = _clean(v)
+    if out.get("type") == "object" and "properties" in out:
+        out["required"] = list(out["properties"])
+        out["additionalProperties"] = False
+    return out
 
 
 def vllm_json_schema(model: type[BaseModel]) -> dict:
     """Self-contained JSON schema for vLLM: refs inlined, every property required, no extras."""
     schema = model.model_json_schema(by_alias=True, mode="validation")
     defs = schema.get("$defs", {})
-    return _clean(_inline_refs(schema, defs))
+    out = _clean(_inline_refs(schema, defs))
+    _check_properties(model, out)
+    return out
+
+
+def _check_properties(model: type[BaseModel], schema: dict, path: str = "$") -> None:
+    """Every model field must be a schema property (guards against schema post-processing bugs)."""
+    aliases = [f.alias or n for n, f in model.model_fields.items()]
+    props = list(schema.get("properties", {}))
+    if aliases != props:
+        raise TemplateError(f"schema properties {props} differ from model fields {aliases}", path)
 
 
 def check_schema_portability(schema: Any, path: str = "$") -> list[str]:
@@ -506,6 +523,12 @@ class Template:
         dest.mkdir(parents=True, exist_ok=True)
         for role, path in self.files.items():
             shutil.copy2(path, dest / _SNAPSHOT_NAMES.get(role, path.name))
+        if "postprocess" in self.files and "config" in self.files:
+            # the hook is copied as postprocess.py: point the copied config at it
+            cfg = yaml.safe_load(self.files["config"].read_text()) or {}
+            if cfg.get("postprocess") != "postprocess.py":
+                cfg["postprocess"] = "postprocess.py"
+                (dest / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
         (dest / "schema.json").write_text(json.dumps(self.json_schema, indent=1))
         (dest / "rendered_system_prompt.md").write_text(self.system_prompt)
 
@@ -541,7 +564,9 @@ def _fill(text: str, values: dict[str, str]) -> str:
     return text
 
 
-def load_template(ref: str | Path, templates_dir: Path | None = None) -> Template:
+def load_template(
+    ref: str | Path, templates_dir: Path | None = None, name: str | None = None
+) -> Template:
     """Load a template folder (template.yaml [+ system_prompt.md, user_prompt.md, config.yaml,
     postprocess.py]) or a single YAML file. Missing prompts fall back to templates/_default/."""
     templates_dir = templates_dir or REPO_ROOT / "templates"
@@ -549,14 +574,15 @@ def load_template(ref: str | Path, templates_dir: Path | None = None) -> Templat
     files: dict[str, Path] = {}
     if path.is_dir():
         folder: Path | None = path
-        name = path.name
+        path_name = path.name
         files["template"] = path / "template.yaml"
         if not files["template"].is_file():
             raise TemplateError("template folder has no template.yaml", source=path)
     else:
         folder = None
-        name = path.stem
+        path_name = path.stem
         files["template"] = path
+    name = name or path_name
     for role in ("system_prompt", "user_prompt"):
         own = folder / f"{role}.md" if folder else None
         files[role] = own if own and own.is_file() else DEFAULT_PROMPTS_DIR / f"{role}.md"

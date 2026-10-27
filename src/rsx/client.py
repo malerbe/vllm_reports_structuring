@@ -278,11 +278,20 @@ async def run_extraction(
                 log.exception("unit %s: unexpected error (not recorded)", unit.id)
                 continue
             consecutive_transient = 0
-            writer.write(rec)
+            try:
+                writer.write(rec)
+            except Exception as e:  # e.g. disk quota: stop everything, nothing can be saved
+                log.exception("writing the result of unit %s failed, stopping", unit.id)
+                out.fatal = f"write failed: {e!r}"
+                stop.set()
+                return
             out.written += 1
             out.by_status[rec.status] = out.by_status.get(rec.status, 0) + 1
             if on_record:
-                on_record(rec)
+                try:
+                    on_record(rec)
+                except Exception:
+                    log.exception("progress callback failed")
 
     n_workers = max(1, min(concurrency, len(units)))
     tasks = [asyncio.create_task(worker()) for _ in range(n_workers)]
@@ -300,7 +309,15 @@ async def run_extraction(
             await asyncio.gather(*tasks, return_exceptions=True)
     stop_wait.cancel()
     await asyncio.gather(stop_wait, return_exceptions=True)
-    # Workers catch their own errors; retrieve the gather result so nothing is left unobserved.
+    # Workers catch their own errors; if one still died, log it and make sure no worker outlives
+    # the results writer.
+    for t in tasks:
+        if not t.done():
+            t.cancel()
+    for res in await asyncio.gather(*tasks, return_exceptions=True):
+        if isinstance(res, Exception):
+            log.error("worker crashed: %r", res)
+            out.fatal = out.fatal or f"worker crashed: {res!r}"
     await asyncio.gather(all_done, return_exceptions=True)
     out.stopped = stop.is_set()
     out.not_started = queue.qsize()

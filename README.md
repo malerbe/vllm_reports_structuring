@@ -39,7 +39,7 @@ fully offline. All paths are in [`configs/paths.env`](configs/paths.env).
 | vLLM | one Apptainer image `.sif` on `/hnvme/.../containers/` | single file: no inode cost, pinned version |
 | model weights | `/hnvme/workspace/y106bb17-lmalerba_data/models/` | ~30 files per model |
 | download / build caches | login node `/scratch/$USER/rsx` | never on `/hnvme` (inode quota) or `$HOME` |
-| vLLM / torch.compile caches | job-local `$TMPDIR` (deleted at job end) | set `RSX_VLLM_CACHE` to keep them |
+| vLLM / torch.compile caches | job-local `$TMPDIR` (deleted at job end) | set `RSX_VLLM_CACHE` (in paths.env) to keep them |
 
 ```bash
 cd ~/projects/vllm_reports_structuring
@@ -57,6 +57,13 @@ All three scripts are idempotent (rerun = check / resume).
 - `download_models.sh` refuses to run when `/hnvme` is close to its inode quota (`RSX_HNVME_MAX_FILES`).
   It excludes the duplicate `original/` and `metal/` weights of gpt-oss and checks that every shard
   in the index is present.
+
+Jobs are submitted with `--export=NONE`: settings must go in `configs/paths.env` (or
+`configs/models.yaml`, the template), not in variables exported in your shell.
+
+Do not edit the code (`src/rsx`) while jobs are running: the install is editable, so a job that
+starts or imports a module during an edit can mix two versions. Templates are safe to edit, because
+each run keeps its own snapshot and refuses to resume with a different template.
 
 `python` below means the `python311` interpreter
 (`/home/hpc/y106bb/y106bb17/conda_environments/python311/bin/python`, or `conda activate python311`).
@@ -123,6 +130,12 @@ python -m rsx export runs/chest_ct_findings/gpt-oss-120b/train      # merges all
 ```
 
 Keep the same `ARRAY` value when you resubmit a sharded run (shard membership depends on it).
+
+- **Logs:** one per task, `runs/logs/<job-name>_<arrayid>_<task>.log`.
+- **Rerunning one shard:** `sbatch --array=2 ... scripts/run.sbatch job ... --num-shards 4` (the
+  array index is then the shard id).
+- **`--then-export` with shards:** only the last shard to finish exports (the others log that
+  units are still missing). Each export file is written atomically.
 
 **Subsets.** Use `--limit N` (first N), `--sample N --seed S` (random, deterministic), or
 `--ids <unit ids | scan keys | VolumeNames>`. Reports are sent longest first, which shortens the tail
@@ -412,7 +425,8 @@ Inside a job (`scripts/run.sbatch` -> `python -m rsx job ...`):
 - **`temperature`**: 0.0 by default, for reproducible extraction. OpenAI recommends 1.0 for gpt-oss;
   compare the two on ~50 reports if quality matters more than determinism.
 - **Prefix caching** is on: the system prompt is identical for every report, so it is computed once.
-- **Faster startup**: `RSX_VLLM_CACHE=$HOME/.cache/rsx-vllm` keeps the torch.compile cache between jobs.
+- **Faster startup**: `RSX_VLLM_CACHE=${HOME}/.cache/rsx-vllm` in `configs/paths.env` keeps the
+  torch.compile cache between jobs.
 
 ## Troubleshooting
 
@@ -423,6 +437,8 @@ Inside a job (`scripts/run.sbatch` -> `python -m rsx job ...`):
 - **Many `validation_error`**: should not happen with constrained decoding.
   - Check `vllm.log` for grammar warnings (backend fallback).
   - Run `rsx template schema T`.
+- **Template paths**: `rsx submit` / `launch.sh` validate the template on the login node and pass it
+  to the job as an absolute path, so relative paths (`./my_template`) work from any directory.
 - **`TemplateChangedError`**: the template, prompts or config changed since the run started. Use a
   new `--run-name` or `--allow-template-change`.
 - **"is locked by another process"**: another job is writing this run (or shard). Wait, or use

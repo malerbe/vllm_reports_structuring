@@ -120,7 +120,21 @@ def _cmd_serve(args) -> int:
 
 
 def _cmd_submit(args) -> int:
+    from .registry import get_model
+    from .template import load_template
+
     paths = load_paths()
+    # Validate on the login node (not after queueing) and pass absolute paths: the job runs
+    # from the repo root.
+    template = load_template(args.template, paths.templates_dir)
+    get_model(args.model)
+    input_path = Path(args.input).resolve()
+    if not input_path.is_file():
+        print(f"input file {input_path} not found", file=sys.stderr)
+        return 2
+    logs = paths.runs_dir / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    pattern = "%x_%A_%a.log" if args.array else "%x_%j.log"
     sbatch = [
         "sbatch",
         "--partition",
@@ -129,19 +143,22 @@ def _cmd_submit(args) -> int:
         args.time,
         "--job-name",
         args.job_name,
+        "--output",
+        str(logs / pattern),
     ]
     if args.array:
         sbatch += ["--array", f"0-{args.array - 1}"]
     if args.dependency:
         sbatch += ["--dependency", args.dependency]
+    template_ref = str(template.folder or template.files["template"])
     job_args = [
         "job",
         "--template",
-        args.template,
+        template_ref,
         "--model",
         args.model,
         "--input",
-        str(Path(args.input).resolve()),
+        str(input_path),
         *args.extra,
     ]
     cmd = [*sbatch, str(paths.root / "scripts" / "run.sbatch"), *job_args]
@@ -153,7 +170,10 @@ def _cmd_submit(args) -> int:
     sys.stderr.write(out.stderr)
     if out.returncode == 0:
         job_id = out.stdout.strip().split()[-1]
-        print(f"log: {paths.runs_dir / 'logs'}/{args.job_name}_{job_id}.log")
+        if args.array:
+            print(f"logs: {logs}/{args.job_name}_{job_id}_<0..{args.array - 1}>.log")
+        else:
+            print(f"log: {logs}/{args.job_name}_{job_id}.log")
     return out.returncode
 
 

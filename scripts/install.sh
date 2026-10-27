@@ -36,10 +36,14 @@ grep -v '==absent' <<<"$before" > "$constraints" || true
     -e "$RSX_ROOT[dev,download]"
 
 after=$(versions)
-if [[ "$before" != "$after" ]]; then
+# Only packages present before are guarded; absent ones may be installed (logged).
+changed=$(comm -23 <(grep -v '==absent' <<<"$before" | sort) <(sort <<<"$after"))
+if [[ -n "$changed" ]]; then
     diff <(echo "$before") <(echo "$after") || true
     die "guarded package versions changed (see diff above)"
 fi
+added=$(comm -13 <(sort <<<"$before") <(sort <<<"$after") | grep -v '==absent' || true)
+[[ -n "$added" ]] && log "newly installed: $(tr '\n' ' ' <<<"$added")"
 log "guarded packages unchanged: $(tr '\n' ' ' <<<"$after")"
 
 mkdir -p "$RSX_RUNS_DIR/logs" "$RSX_RUNS_DIR/servers"
