@@ -1,13 +1,22 @@
 """Compare exported chest_ct_findings runs on CT-RATE: alert rates and label agreement.
 
   python scripts/evaluate_ctrate.py RUN [RUN ...] --labels ../valid_predicted_labels.csv
-      [--mapping templates/chest_ct_findings/label_mapping.yaml] [--common] [--per-label]
+      [--mapping templates/chest_ct_findings/label_mapping.yaml] [--common] [--per-label] [--write]
 
 For each run (a directory with exports/), prints:
   - the rate of each location alert column of the findings table (see the template postprocess)
   - agreement with the 18 CT-RATE labels per VolumeName: a label is predicted 1 when a finding of
     a mapped finding_type is present (variant "+uncertain": present or uncertain).
 --common restricts every run to the VolumeNames extracted (status ok) by all runs.
+--write saves, in each run's exports/:
+  ctrate_agreement.csv      per label: pos, tp, fp, fn, precision, recall, f1 (status present)
+  ctrate_disagreements.csv  one row per report and label where the run and CT-RATE differ, with
+                            the run's findings / negations of the mapped types and the report text,
+                            and empty `verdict` (run_ok | run_error | definition | unclear) and
+                            `note` columns to fill in by hand
+
+The CT-RATE labels were themselves produced by a model: a disagreement is a case to look at, not
+an error of the run.
 """
 
 from __future__ import annotations
@@ -17,6 +26,8 @@ from pathlib import Path
 
 import pandas as pd
 import yaml
+
+from rsx.results import latest_records
 
 REPO = Path(__file__).resolve().parents[1]
 VARIANTS = {"present": {"present"}, "+uncertain": {"present", "uncertain"}}
@@ -28,6 +39,50 @@ def load(run: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     reports = pd.read_parquet(exports / "reports.parquet")
     findings = pd.read_parquet(exports / "findings.parquet")
     return reports[reports["status"] == "ok"], findings
+
+
+def _describe(items: pd.DataFrame, cols: list[str]) -> str:
+    rows = items.drop_duplicates(["unit_id", "item_idx"])
+    return "\n".join(" | ".join(str(r[c]) for c in cols) for _, r in rows.iterrows())
+
+
+def disagreements(
+    run: Path, pred: pd.DataFrame, truth: pd.DataFrame, mapping: dict[str, str]
+) -> pd.DataFrame:
+    """One row per (report, label) where the run and CT-RATE differ (reconstructions merged)."""
+    findings = pd.read_parquet(run / "exports" / "findings.parquet")
+    negations = pd.read_parquet(run / "exports" / "negations.parquet")
+    texts = {r.id: r.text for r in latest_records(run).values()}
+    unit_of = dict(zip(findings["VolumeName"], findings["unit_id"], strict=True))
+    reports = pd.read_parquet(run / "exports" / "reports.parquet")
+    unit_of.update(zip(reports["VolumeName"], reports["unit_id"], strict=True))
+    types_of: dict[str, list[str]] = {}
+    for ftype, label in mapping.items():
+        types_of.setdefault(label, []).append(ftype)
+    truth = truth.loc[pred.index, pred.columns]
+    rows: dict[tuple[str, str], dict] = {}
+    for label in pred.columns:
+        for member in pred.index[pred[label] != truth[label]]:
+            unit = unit_of[member]
+            if (unit, label) in rows:
+                rows[(unit, label)]["volumes"] += f";{member}"
+                continue
+            types = types_of.get(label, [])
+            f = findings[(findings["unit_id"] == unit) & findings["finding_type"].isin(types)]
+            n = negations[(negations["unit_id"] == unit) & negations["finding_type"].isin(types)]
+            rows[(unit, label)] = {
+                "unit_id": unit,
+                "volumes": member,
+                "label": label,
+                "ctrate": int(truth.loc[member, label]),
+                "run": int(pred.loc[member, label]),
+                "run_findings": _describe(f, ["finding_type", "status", "evidence"]),
+                "run_negations": _describe(n, ["finding_type", "qualifier", "evidence"]),
+                "verdict": "",
+                "note": "",
+                "report": texts.get(unit, ""),
+            }
+    return pd.DataFrame(rows.values()).sort_values(["label", "ctrate", "unit_id"])
 
 
 def alert_rates(findings: pd.DataFrame) -> dict[str, float]:
@@ -105,12 +160,14 @@ def main() -> None:
     )
     ap.add_argument("--common", action="store_true")
     ap.add_argument("--per-label", action="store_true")
+    ap.add_argument("--write", action="store_true", help="save agreement + disagreement CSVs")
     args = ap.parse_args()
 
     mapping = yaml.safe_load(args.mapping.read_text())
     truth = pd.read_csv(args.labels).set_index("VolumeName")
     labels = list(truth.columns)
-    data = {f"{run.parent.name}/{run.name}": load(run) for run in args.runs}
+    run_of = {f"{run.parent.name}/{run.name}": run for run in args.runs}
+    data = {name: load(run) for name, run in run_of.items()}
     if args.common:
         common = set.intersection(*(set(r["VolumeName"]) for r, _ in data.values()))
         data = {
@@ -128,6 +185,14 @@ def main() -> None:
             agree[(name, variant)] = {"volumes": len(members), **summary(table, pred, truth)}
             if variant == "present":
                 per_label[name] = table
+                if args.write:
+                    out = run_of[name] / "exports"
+                    table.to_csv(out / "ctrate_agreement.csv", index_label="label")
+                    diff = disagreements(run_of[name], pred, truth, mapping)
+                    diff.to_csv(out / "ctrate_disagreements.csv", index=False)
+                    print(
+                        f"wrote {out}/ctrate_agreement.csv, ctrate_disagreements.csv ({len(diff)})"
+                    )
 
     pd.set_option("display.width", 250)
     pd.set_option("display.float_format", "{:.3f}".format)
