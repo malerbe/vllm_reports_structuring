@@ -10,12 +10,14 @@ exports/
   summary.json              statuses, latencies, tokens, evidence match rates
 
 Typed nulls stay null (NA): "not mentioned" is never turned into False or "".
-Optional template hook: postprocess.py defining `postprocess(table: str, df) -> df`.
+Optional template hook: postprocess.py defining `postprocess(table: str, df) -> df`, or
+`postprocess(table, df, texts) -> df` to also get the report texts ({unit_id: text}).
 """
 
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import logging
 import os
@@ -133,7 +135,11 @@ def build_tables(
             dfs[name] = df.sort_values(keys, kind="stable").reset_index(drop=True)
     post = load_postprocess(template)
     if post:
-        dfs = {name: post(name, df) for name, df in dfs.items()}
+        if len(inspect.signature(post).parameters) >= 3:
+            texts = {r.id: r.text for r in records}
+            dfs = {name: post(name, df, texts) for name, df in dfs.items()}
+        else:
+            dfs = {name: post(name, df) for name, df in dfs.items()}
     return dfs
 
 

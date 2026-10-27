@@ -10,7 +10,10 @@ GENERAL RULES
 2. Not mentioned = null (or [] for lists). Never create a negation for something the report does
    not mention.
 3. Every entry needs "evidence": the shortest exact substring of the report (copy the characters
-   exactly) that supports the entry. Several entries may share the same evidence.
+   exactly, never shorten with "..." and never join two sentences) that supports the entry,
+   including the words that give its laterality, lobes and segments ("In both lungs, ... nodules
+   ... in the right lower lobe", not only "nodules ... in the right lower lobe"). Several entries
+   may share the same evidence.
 4. Sort every sentence first: a sentence (or part of a sentence) saying that something is absent,
    not detected, not observed, normal, natural or preserved is NEVER a finding and NEVER a
    diagnosis. It is either a negation (rules below) or ignored. findings only contains
@@ -60,6 +63,15 @@ FINDINGS (things described as present or possibly present)
     [39] AND pleural_effusion left with numbers [45]. Never put two sides' measurements in one
     size. Use laterality bilateral only when the report says both sides / bilateral for that
     finding (in the sentence, its section, or the impression).
+    When a sentence describes lesions in both lungs (or several lobes) and then names one place
+    for the largest / most prominent ones, create two entries for the same lesions: first the
+    broad entry (laterality bilateral, no lobes or sites unless they are named for all of them),
+    then the detailed entry (its own laterality, lobes, sites, size, is_largest) with subset_of =
+    position of the broad entry (0 = first entry of findings). "Multiple nodules in both lungs,
+    the largest 11 mm in the anterior upper lobe of the left lung" -> [k] lung_nodule bilateral,
+    count multiple; [k+1] lung_nodule left, left_upper_lobe, LUL_anterior, 11 mm, is_largest true,
+    subset_of k. Never give one entry laterality bilateral with lobes of one side only. Use
+    subset_of only for this case; separate lesions get separate entries with subset_of null.
 14. status = uncertain only when the finding itself is hedged. A finding that is present but whose
     cause is hedged ("consolidation, in favor of pneumonia") is present; put the hedged cause in
     impression_diagnoses.
@@ -72,17 +84,25 @@ FINDINGS (things described as present or possibly present)
     or extent. "Prominent at the basal level" is a distribution, not a severity.
 17. Locations: use lobes for named lobes, sites for named segments / lymph node stations / vessel
     parts (lobe-qualified segment names), distribution for patterns such as subpleural or basal.
-    "Anterior segment" must be attributed to the lobe named in the sentence.
+    "Anterior segment" must be attributed to the lobe named in the sentence. "Lingula" -> lobes
+    [lingula]; a lingular segment only if "superior / inferior lingular" is written. Take sites
+    only from the entry's own evidence, never from a neighbouring entry. A site must belong to
+    the lobes and laterality of its entry (LUL_* -> left_upper_lobe or lingula, RLL_* ->
+    right_lower_lobe, ...).
 18. Comparison with a previous examination: set exam.comparison_with_prior = true and fill change
     of the findings concerned ("two newly emerging lymph nodes" -> change new; "no significant
-    size difference compared with the previous examination" -> change stable).
+    size difference compared with the previous examination" -> change stable). "Stable",
+    "unchanged", "regressed", "progressed" about a finding also mean a comparison: comparison_with_prior
+    true and the matching change. A recommendation such as "to be evaluated together with previous
+    examinations, if any" is NOT a comparison (leave comparison_with_prior null).
 
 DIAGNOSES (impression_diagnoses)
 19. One entry per diagnosis or suspected cause named in the report ("Covid-19 pneumonia",
     "metastatic lesions", "aspiration?", "small airway disease?"). Never a whole sentence listing
     several things, never a description of findings without a diagnosis, never a negated or
     normal statement ("No signs of infection" is a negation, "within normal limits" is nothing).
-    category from the closed list; certainty from the hedging words.
+    category from the closed list; certainty from the hedging words. A category names the cause:
+    "aspiration pneumonia" -> aspiration; "metastatic nodules" -> metastasis.
 
 TERMINOLOGY OF THESE REPORTS
 - "recessions", "fibrotic bands/strands", "sequelae changes" -> pulmonary_fibrotic_sequela;

@@ -204,6 +204,7 @@ def test_chest_ct_findings_example_validates():
                 "evidence": "6x4 mm nodule",
                 "finding_type": "lung_nodule",
                 "name": "nodule",
+                "subset_of": None,
                 "status": "present",
                 "region": "lung",
                 "laterality": "left",

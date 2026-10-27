@@ -107,3 +107,72 @@ def test_chest_postprocess_size_mm():
     assert pd.isna(out["size_mm_max"][2]) and "unusable" in out["size_warning"][2]
     assert pd.isna(out["size_mm_max"][3])
     assert post("negations", df) is df
+
+
+def test_chest_postprocess_location_checks():
+    t = load_template("chest_ct_findings", REPO / "templates")
+    from rsx.export import load_postprocess
+
+    post = load_postprocess(t)
+    text = (
+        "FINDINGS:\nIn both lungs, a few nodules up to 3 mm are observed in the superior right "
+        "lung lower lobe. There are also 11 mm nodules at the level of the left lingula.\n\n"
+        "IMPRESSION:\nNodules in both lungs."
+    )
+    rows = [
+        # bilateral with a right lobe only, quote without 'both lungs'
+        (
+            "lung_nodule",
+            "bilateral",
+            ["right_lower_lobe"],
+            ["RLL_superior"],
+            None,
+            "a few nodules up to 3 mm are observed in the superior right lung lower lobe",
+        ),
+        # segment copied from elsewhere: LUL_anterior is neither written nor in the lingula
+        (
+            "lung_nodule",
+            "left",
+            ["lingula"],
+            ["LUL_anterior"],
+            None,
+            "11 mm nodules at the level of the left lingula",
+        ),
+        # detailed entry pointing to the broad one
+        (
+            "lung_nodule",
+            "right",
+            ["right_lower_lobe"],
+            ["RLL_superior"],
+            0,
+            "nodules up to 3 mm are observed in the superior right lung lower lobe",
+        ),
+        # subset_of pointing forward / to another type
+        ("atelectasis", None, [], [], 3, "nodules"),
+    ]
+    df = pd.DataFrame(
+        [
+            {
+                "VolumeName": "v",
+                "unit_id": "u",
+                "item_idx": i,
+                "finding_type": f,
+                "laterality": lat,
+                "lobes": json.dumps(lobes),
+                "sites": json.dumps(sites),
+                "subset_of": sub,
+                "evidence": ev,
+            }
+            for i, (f, lat, lobes, sites, sub, ev) in enumerate(rows)
+        ]
+    )
+    out = post("findings", df, {"u": text})
+    assert list(out["lat_lobe_conflict"]) == [True, False, False, False]
+    assert list(out["site_lobe_conflict"]) == [False, True, False, False]
+    assert out["site_unsupported"][1] == "LUL_anterior" and pd.isna(out["site_unsupported"][0])
+    assert list(out["laterality_source"][:3]) == ["sentence", "evidence", "evidence"]
+    assert pd.isna(out["laterality_source"][3])
+    assert list(out["subset_of_invalid"]) == [False, False, False, True]
+    assert list(out["location_alert"]) == [True, True, False, True]
+    # the old two-argument call still works (no texts: laterality_source none)
+    assert post("findings", df)["laterality_source"][0] == "none"

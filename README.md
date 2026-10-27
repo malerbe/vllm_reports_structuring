@@ -311,9 +311,11 @@ from typing import Any, ClassVar
 import pandas as pd
 from .base import ReportFeeder, ReportUnit, join_sections, register_feeder
 
+
 @register_feeder("my_dataset")
 class MyDatasetFeeder(ReportFeeder):
     """One line description (shown by `rsx feeders`)."""
+
     member_column = "StudyID"
     default_options: ClassVar[dict[str, Any]] = {"sep": ";"}
 

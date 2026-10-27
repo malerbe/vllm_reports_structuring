@@ -81,7 +81,7 @@ negations:
       - {_type: enum, values: *sites}
 
 findings:
-  - evidence: "Shortest verbatim quote from the report supporting this entry (copy characters exactly)."
+  - evidence: "Shortest verbatim quote from the report supporting this entry, including the words that give its laterality / lobes / segments (copy characters exactly)."
     finding_type:
       _type: enum
       values: *finding_types
@@ -91,6 +91,9 @@ findings:
       _type: string
       _nullable: false
       _hint: "Short name as worded in the report, e.g. 'ground-glass density increase'."
+    subset_of:
+      _type: integer
+      _hint: "Position (0 = first entry of findings) of the earlier, broader entry of the same lesions when this entry details a part of them ('nodules in both lungs, the largest in the right lower lobe' -> the right lower lobe entry points to the both-lungs entry). null otherwise."
     status:
       _type: enum
       values: [present, uncertain]
@@ -99,11 +102,11 @@ findings:
     region: {_type: enum, values: *regions}
     laterality: {_type: enum, values: *laterality, _hint: "'both lungs' -> bilateral."}
     lobes:
-      - {_type: enum, values: *lobes}
+      - {_type: enum, values: *lobes, _hint: "'lingula' -> lingula."}
     sites:
       - _type: enum
         values: *sites
-        _hint: "Segments (lobe-qualified), lymph node stations, vessel parts. Only if explicitly named."
+        _hint: "Segments (lobe-qualified), lymph node stations, vessel parts. Only if named in this entry's own evidence."
     distribution:
       - _type: enum
         values: [subpleural, peripheral, central, perihilar, peribronchovascular, centrilobular,
