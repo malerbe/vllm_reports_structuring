@@ -198,7 +198,6 @@ def test_chest_ct_findings_example_validates():
             "slice_thickness_mm": 1.5,
             "clinical_indication": None,
             "comparison_with_prior": None,
-            "limited_evaluation_regions": [],
         },
         "findings": [
             {
@@ -237,6 +236,7 @@ def test_chest_ct_findings_example_validates():
             }
         ],
         "impression_diagnoses": [],
+        "limited_evaluation": [{"evidence": "could not be evaluated", "region": "mediastinum"}],
     }
     t.model.model_validate(report)
 

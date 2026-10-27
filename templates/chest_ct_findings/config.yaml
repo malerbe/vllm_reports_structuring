@@ -10,4 +10,5 @@ export_tables:             # table name -> top-level list of the template
   findings: findings
   negations: negations
   diagnoses: impression_diagnoses
+  limited_evaluation: limited_evaluation
 postprocess: postprocess.py

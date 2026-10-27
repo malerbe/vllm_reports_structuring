@@ -25,7 +25,9 @@ _vocab:
     airway_abnormality, esophageal_abnormality, thyroid_abnormality, thymic_tissue,
     breast_or_chest_wall_abnormality, degenerative_spine_changes, fracture, bone_lesion,
     hepatic_steatosis, liver_lesion, gallbladder_stone, kidney_lesion, kidney_stone,
-    adrenal_lesion, spleen_abnormality, post_surgical_change, other]
+    adrenal_lesion, spleen_abnormality, post_surgical_change,
+    # used in negations ('no signs of infection')
+    infection, other]
   lobes: &lobes [right_upper_lobe, right_middle_lobe, right_lower_lobe, left_upper_lobe, lingula,
     left_lower_lobe]
   sites: &sites [
@@ -55,11 +57,11 @@ exam:
     _hint: "CLINICAL INFORMATION copied verbatim; null if 'Not given' or empty."
   comparison_with_prior:
     _type: boolean
-    _hint: "true if the report compares with a previous examination; null if not mentioned."
-  limited_evaluation_regions:
-    - _type: enum
-      values: *regions
-      _hint: "Regions stated as not optimally evaluable (e.g. 'mediastinum could not be evaluated optimally')."
+    _hint: "true if the report refers to a previous examination ('previous', 'compared with', 'newly developed', 'regressed', 'stable'); null if not mentioned."
+
+limited_evaluation:
+  - evidence: "Verbatim quote saying that a region could not be evaluated (optimally)."
+    region: {_type: enum, values: *regions, _nullable: false}
 
 negations:
   - evidence: "Verbatim quote of the negating or normal sentence (copy characters exactly)."
@@ -125,7 +127,7 @@ findings:
         _type: enum
         values: [diameter, long_axis, short_axis, thickness, dimensions]
         _nullable: false
-        _hint: "dimensions = 2-3 numbers like 6x4; thickness e.g. effusion '1 cm in thickness'."
+        _hint: "dimensions = 2-3 numbers like 6x4; thickness for pleural effusion / pleural thickening measurements."
       qualifier:
         _type: enum
         values: [exact, approximately, up_to, less_than, greater_than, range]
@@ -142,18 +144,21 @@ findings:
     change:
       _type: enum
       values: [new, increased, decreased, stable, resolved]
-      _hint: "Only if compared with a previous exam ('regressed' -> decreased, 'progressed' -> increased)."
+      _hint: "'newly developed', 'newly emerging', 'new' -> new; 'progressed', 'increased' -> increased; 'regressed', 'decreased' -> decreased; 'stable', 'unchanged', 'no significant size difference' -> stable; 'disappeared' -> resolved."
     descriptors:
       - {_type: string, _hint: "Short verbatim modifiers: 'ground-glass', 'calcified', 'linear', 'subsegmental', 'millimetric', 'nonspecific', 'crazy paving', 'bullous'."}
 
 impression_diagnoses:
   - evidence: "Verbatim quote, usually from IMPRESSION."
-    diagnosis: {_type: string, _nullable: false, _hint: "As worded, e.g. 'Covid-19 pneumonia'."}
+    diagnosis: {_type: string, _nullable: false, _hint: "Short name of ONE diagnosis as worded, e.g. 'Covid-19 pneumonia' (never a whole sentence)."}
     category:
       _type: enum
-      values: [pneumonia, covid19_pneumonia, other_infection, malignancy, interstitial_lung_disease,
-               copd, heart_failure_or_fluid_overload, post_infectious_sequela, other]
+      values: [pneumonia, covid19_pneumonia, aspiration, tuberculosis, other_infection, lung_cancer,
+               metastasis, lymphoma, other_malignancy, interstitial_lung_disease, emphysema_or_copd,
+               small_airway_disease, heart_failure_or_fluid_overload, pulmonary_embolism,
+               pulmonary_hypertension, post_infectious_sequela, other]
       _nullable: false
+      _hint: "Use other only if nothing fits."
     certainty:
       _type: enum
       values: [definite, probable, possible]
