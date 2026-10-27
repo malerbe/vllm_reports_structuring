@@ -83,6 +83,18 @@ scripts/check_run.sh runs/chest_ct_findings/gpt-oss-20b/smoke 18     # >= 18/20 
 TEMPLATE=chest_ct_findings MODEL=gpt-oss-120b INPUT=../validation_reports.csv scripts/launch.sh --then-export
 ```
 
+**Measured on Helma** (H200, vLLM 0.31.0, gpt-oss-20b, 20 validation reports, reasoning effort low):
+
+- server ready in about 160 s, then 20 reports in about 20 s (~3,500 reports/h with only 20 in
+  flight), and the whole job in about 4 min;
+- 20/20 valid, evidence quotes 94–99 % verbatim;
+- reasoning effort `medium` made the 20b 8× slower and truncated 3/20 at 8192 tokens, with no
+  clear gain, so the default stays `low`.
+
+Not measured yet: the full validation set and gpt-oss-120b. Check the content of the first run by
+hand: the 20b still makes fine-grained errors (e.g. pericardial vs pleural thickening, scope sites
+of negations).
+
 `scripts/launch.sh` is the one-line launcher. The variables are `TEMPLATE`, `MODEL`, `INPUT`,
 `PARTITION` (h200 by default), `TIME`, `ARRAY`, `DEPENDENCY`, `JOB_NAME` and `DRY_RUN`. Extra
 arguments go to `rsx job`. It calls `rsx submit`, which prints the exact `sbatch` command and the
