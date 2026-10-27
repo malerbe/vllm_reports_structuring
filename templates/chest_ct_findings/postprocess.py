@@ -41,7 +41,7 @@ SEGMENT_LOBES = {
 LINGULAR_LOBES = {"left_upper_lobe", "lingula"}
 # segment name part -> words that must appear near the evidence
 SEGMENT_WORDS = {
-    "apical": r"\bapic(al|o)",
+    "apical": r"\bapic(al|o)|\bapex",
     "posterior": r"\bposter(ior|o)",
     "anterior": r"\banter(ior|o)",
     "lateral": r"\blater(al|o)",

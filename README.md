@@ -177,7 +177,7 @@ A template is a folder `templates/<name>/` (or any path):
 | `system_prompt.md` | no | instructions; placeholders `{{reader_view}}` (the annotated template) and `{{missing_value}}`. Default: `templates/_default/` |
 | `user_prompt.md` | no | must contain `{{report}}`. Default: `templates/_default/` |
 | `config.yaml` | no | default feeder, request overrides, evidence fields, export tables, postprocess hook |
-| `postprocess.py` | no | `postprocess(table, df) -> df`, applied by `rsx export` |
+| `postprocess.py` | no | `postprocess(table, df) -> df` (or `postprocess(table, df, texts)` to get the report texts by unit id), applied by `rsx export` |
 
 A single `.yaml` file also works: it is treated as a RadFields template with the default prompts, e.g.
 `-t ../labels_extraction/RadFields/templates/de/ct/ct_thorax_standard.yaml`.
@@ -241,37 +241,70 @@ postprocess: postprocess.py
 
 ### The `chest_ct_findings` template
 
-This is the v1 template, finding-centric, for CT-RATE English reports. The vocabularies were taken
-from the validation reports.
+This is a finding-centric template for CT-RATE English reports (version v3.1). The vocabularies
+were taken from the validation reports.
 
-- `exam`: contrast, slice thickness, clinical indication, comparison with prior, regions not
-  optimally evaluable.
-- `findings[]`: one entry per finding.
-  - `evidence`, `finding_type` (an enum of 45: the 18 CT-RATE labels, frequent extras, `other`),
-    `name`, `status` (present | uncertain).
-  - Location: `region`, `laterality`, `lobes[]`, `sites[]` (lobe-qualified segments, lymph node
-    stations, vessel parts), `distribution[]`.
-  - Count: `count`, `count_number`.
-  - `size`: numbers and unit **as written**, measure, qualifier (exact, up_to, range...), is_largest.
-  - `severity` (minimal..severe, only from explicit words), `change` (vs prior), `descriptors[]`.
-- `negations[]`: explicit absence or normal statements.
+- `exam`: contrast, slice thickness, clinical indication, comparison with a prior examination.
+- `limited_evaluation[]`: regions the report explicitly calls not (optimally) evaluable, with the
+  quote. A non-contrast scan alone is not a limitation.
+- `negations[]`: explicit absence or normal statements. They come **before** `findings` in the
+  schema, so that the model sorts negative sentences out first.
   - `finding_type`, `kind` (explicit_negation | normal_statement for a fixed list of mappings).
   - `qualifier` ("suspicious", "significant"... = restricted negation).
   - Scope: `regions[]`, `laterality`, `sites[]`.
-- `impression_diagnoses[]`: diagnosis, category, certainty (definite | probable | possible).
+- `findings[]`: one entry per finding and location group.
+  - `evidence` (including the words that give the location), `finding_type` (an enum of 46: the
+    18 CT-RATE labels, frequent extras, `other`), `name`, `status` (present | uncertain).
+  - `subset_of`: position of an earlier, broader entry of the same lesions (see below).
+  - Location: `region`, `laterality`, `lobes[]`, `sites[]` (lobe-qualified segments, lymph node
+    stations, vessel parts), `distribution[]`.
+  - Count: `count`, `count_number`.
+  - `size`: numbers and unit **as written**, measure (thickness for pleural effusion), qualifier,
+    is_largest. One entry per side when each side has its own measurement.
+  - `severity` (minimal..severe, only from explicit words), `change` (vs prior), `descriptors[]`.
+- `impression_diagnoses[]`: one diagnosis per entry, category from a closed list (pneumonia,
+  metastasis, emphysema_or_copd, ...), certainty (definite | probable | possible).
+
+"Nodules in both lungs, the largest 11 mm in the left upper lobe" gives two linked entries:
+
+| item | laterality | lobes | size | subset_of |
+|---|---|---|---|---|
+| 0 | bilateral | [] | null | null |
+| 1 | left | [left_upper_lobe] | 11 mm, is_largest | 0 |
+
+Item 1 is a part of item 0, not a second finding. Left lung? yes (item 0). Left upper lobe? yes
+(item 1). Other lobes? unknown, not no. Largest size: item 1.
 
 The prompt explains the splitting rules, the size rules ("millimetric" is not a measurement), the
-negation mappings, the Turkish-translation wording ("recessions", "calibration", "natural", "CTO")
-and gives a glossary of finding types.
+negation mappings, the Turkish-translation wording ("recessions", "calibration", "natural", "CTO",
+"LAP") and gives a glossary of finding types.
 
-At export, `postprocess.py` adds `size_mm_max`/`size_mm_min`: mm and cm are converted, while `m`
-and `none` give null plus a warning. `label_mapping.yaml` maps finding types to the 18 CT-RATE
-labels.
+At export, `postprocess.py` adds columns to the findings table. They only flag; nothing is
+corrected:
+
+| Column | Meaning |
+|---|---|
+| `size_mm_max`, `size_mm_min`, `size_warning` | size in mm (cm converted; `m` / `none` give null + warning) |
+| `lat_lobe_conflict` | laterality contradicts the lobes (bilateral with lobes of one side, right with a left lobe) |
+| `site_lobe_conflict` | a lung segment outside the lobes / laterality of its entry |
+| `site_unsupported` | lung segments whose name (anterior, lingular...) is not in the sentence of the evidence |
+| `laterality_source` | where the laterality is written: `evidence`, `sentence`, `impression` or `none` |
+| `subset_of_invalid` | `subset_of` does not point to an earlier entry of the same finding type |
+| `location_alert` | any of the above (`laterality_source == none` included) |
+
+`label_mapping.yaml` maps finding types to the 18 CT-RATE labels. `scripts/evaluate_ctrate.py`
+compares exported runs: alert rates, and agreement with the CT-RATE labels per volume.
+
+```bash
+python scripts/evaluate_ctrate.py runs/chest_ct_findings/gpt-oss-{20b,120b}/<run> \
+    --labels ../valid_predicted_labels.csv --common --per-label
+```
 
 For downstream question generation, the intended reading is:
 
 - **yes**: a `findings` entry with status `present` (`uncertain` is not yes).
 - **no**: a `negations` entry with `qualifier: null` whose scope covers the question.
+- a location flagged by `location_alert` is **unknown**.
 - anything else is **unknown**.
 
 ### Writing a new template
