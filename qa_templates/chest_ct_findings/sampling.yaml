@@ -1,0 +1,41 @@
+# Default sampling_config of the chest_ct_findings template set. See docs/qa/sampling.md.
+# A dict passed to the generator (or to sample_qa_from_item) is merged over this file.
+
+# Share of each question type among the k questions of an item (renormalized over the types the
+# item has candidates for).
+qtype: {noul: 0.4, choice: 0.3, score: 0.3}
+
+# template_id -> weight multiplier (default 1; 0 disables the template)
+templates: {}
+
+# Rare concepts: weight (n_max / n_units[concept]) ** alpha, at most max_ratio, on the candidates
+# whose concept is present (scope present) or on all of them (scope all, also the rare No).
+rarity: {alpha: 0.5, max_ratio: 50, scope: present}
+
+# Equal chances for the answers of a (template, concept); min_count > 0 drops the
+# (template, concept) pairs that do not have 2 answers with at least min_count candidates.
+answer_balance: {beta: 1.0, max_ratio: 20, min_count: 0}
+
+# Weight multiplier of the candidates carrying a quality flag. 1 = kept as is, 0 = never drawn.
+# CAUTION: every flag is 1 by default, so flagged candidates ARE drawn. See docs/qa/sampling.md.
+flag_weights:
+  location_alert: 1.0      # laterality / lobes / sites inconsistent with the evidence
+  lat_lobe_conflict: 1.0   # laterality contradicts the lobes
+  site_lobe_conflict: 1.0  # a segment outside the listed lobes
+  subset_of_invalid: 1.0   # subset_of points to an invalid entry
+  size_warning: 1.0        # unusable size unit
+  closed_world: 1.0        # No from "not mentioned" (concepts.closed_world / closed_world_if)
+  derived: 1.0             # finding added by a concepts.finding_rules rule (e.g. crazy paving)
+  low_evidence: 1.0        # evidence_fuzzy < low_evidence_threshold
+low_evidence_threshold: 90
+
+phrasings: train            # train | heldout | all
+shuffle_choice_options: true
+# choice_which_present: a concept can be the answer only if it is negated in >= min_negated
+# reports (else it never appears as a distractor and its mere presence gives the answer away);
+# balance scales answer and distractor weights so that each concept is answer and distractor in
+# similar proportions (0 = off).
+which_present: {min_negated: 20, balance: 1.0}
+fill: short                 # short: fewer than k questions if the item has fewer candidates
+                            # rephrase: complete with already drawn candidates, other wording
+item_weights: {mode: max}   # max | sum

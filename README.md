@@ -19,13 +19,14 @@ reports.csv
   -> rsx export                            parquet/csv tables: reports, findings, negations, ...
 ```
 
-This repo only **extracts facts**. Generating question/answer pairs from them is a separate,
-later step that reads the exported tables.
+The extraction step only **extracts facts**. Question/answer pairs are generated from the exported
+tables by the separate `rsx.qa` package, at training time: see [Q/A generation](#qa-generation).
 
 Contents: [Setup](#setup) · [Quick start](#quick-start) · [Running at scale](#running-at-scale) ·
 [Interactive use](#interactive-use) · [Templates](#templates) · [Feeders (datasets)](#feeders-datasets) ·
-[Models](#models) · [Outputs](#outputs) · [Architecture](#architecture) · [Tuning](#tuning) ·
-[Troubleshooting](#troubleshooting) · [Licences](#licences)
+[Models](#models) · [Outputs](#outputs) · [Q/A generation](#qa-generation) ·
+[Architecture](#architecture) · [Tuning](#tuning) · [Troubleshooting](#troubleshooting) ·
+[Licences](#licences)
 
 ## Setup
 
@@ -426,6 +427,28 @@ them.
 
 Typed `null` stays `NA`; it is never turned into `False` or `""`. `--no-explode` gives one row per
 report instead of one per member. `python -m rsx stats RUN_DIR` prints the summary only.
+
+## Q/A generation
+
+`rsx.qa` turns an export folder into Yes/No (noul), choice and ordered-choice (score) questions,
+for training a decision model. A generator is created once per split (in a PyTorch `Dataset`
+`__init__`), then draws k questions per image on demand:
+
+```python
+from rsx.qa import CTRATEGenerator
+
+gen = CTRATEGenerator("chest_ct_findings")
+gen.connect_structured_report("runs/chest_ct_findings/gpt-oss-120b/ctrate_train_v31/exports")
+gen.sample_qa_from_item("train_10001_a_1.nii.gz", 8, {"qtype": {"noul": 0.2, "choice": 0.4, "score": 0.4}})
+```
+
+```bash
+python -m rsx qa stats   runs/chest_ct_findings/gpt-oss-120b/ctrate_train_v31/exports
+python -m rsx qa preview runs/chest_ct_findings/gpt-oss-120b/ctrate_valid_v31/exports --evidence
+```
+
+Question templates and their phrasings are YAML files in [`qa_templates/`](qa_templates). Full
+documentation: [docs/qa/](docs/qa/README.md).
 
 ## Architecture
 

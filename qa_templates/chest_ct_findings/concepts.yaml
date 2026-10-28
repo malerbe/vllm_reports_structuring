@@ -1,0 +1,132 @@
+# How the structured findings / negations of the chest_ct_findings template become concepts.
+# See docs/qa/question_types.md.
+
+# `other` findings become the concept "other:<normalized name>" (e.g. other:accessory spleen) when
+# the name occurs in at least this many report units; rarer `other` findings are not used.
+other_min_count: 30
+
+# Negation kinds that give a "No". normal_statement = 'heart size is normal' (cardiomegaly).
+negation_kinds: [explicit_negation, normal_statement]
+
+# A negation with a qualifier ('no SUSPICIOUS nodule') does not say the finding is absent, unless
+# the qualifier is listed here for its finding_type (regex, full match, lower case).
+# `_all` applies to every finding_type.
+neutral_qualifiers:
+  _all: [significant]
+  # 'no lymph node of pathological size' = no lymphadenopathy (it is the definition)
+  lymphadenopathy: ["patholog.*", "enlarged", "significant(ly)? (enlarged|patholog.*)"]
+  esophageal_abnormality: ["patholog.*", "significant patholog.*"]
+
+# child -> parents: a present child finding blocks the "No" of its parents
+# ('no infiltration' + ground-glass densities: lung_opacity is not answered No).
+implies:
+  ground_glass_opacity: [lung_opacity]
+  consolidation: [lung_opacity]
+
+# finding_types for which "not mentioned" counts as No (closed world). Empty: a No comes from an
+# explicit negation only. These No carry the closed_world flag (sampling_config.flag_weights).
+# A concept that is uncertain, or negated only with a narrowing qualifier, stays unknown.
+# Set it per dataset in datasets/<dataset>.yaml.
+closed_world: []
+# Conditional closed world: "not mentioned" = No only in reports with an entry in one of the
+# regions (and matching evidence if given), and no `other` finding there. Per dataset too.
+closed_world_if: {}
+
+# Concepts never asked about: not imaging findings, or too heterogeneous.
+#   other:*                  'other' findings (accessory spleen, scoliosis, ...)
+#   infection                a diagnosis, not a visible sign
+#   lymph_node_not_enlarged  a normality statement: becomes a No of lymphadenopathy (rules below)
+exclude: ["other:*", infection, lymph_node_not_enlarged]
+
+# Systematic extraction errors of the chest_ct_findings structuring template (v3.1), found by
+# reading the CT-RATE train reports (2026-10-28). Regex search on the evidence, case-insensitive.
+negation_rules:
+  # 'no pathologically enlarged lymph node' was typed lymph_node_not_enlarged (228 of 232)
+  - {finding_type: lymph_node_not_enlarged, action: retype, to: lymphadenopathy}
+  # esophageal 'no wall thickening' typed peribronchial_thickening
+  - {finding_type: peribronchial_thickening, evidence: "esophag", action: drop}
+  # 'aorta caliber normal' typed arterial_wall_calcification (163 of 170)
+  - {finding_type: arterial_wall_calcification, evidence_not: "calcif|atherom|atheroscl|plaque", action: drop}
+  # 'gallbladder was not observed (operated)' = surgery present, never a No of surgery
+  - {finding_type: post_surgical_change, action: drop}
+  # 'no space-occupying lesion in the liver' typed hepatic_steatosis
+  - {finding_type: hepatic_steatosis, evidence_not: "steato|fatty|adipos|density", action: drop}
+  # 'no occlusive pathology in the trachea', 'no soft tissue component' typed medical_material
+  - finding_type: medical_material
+    evidence_not: "catheter|cannula|pacemaker|stent|prosthe|implant|tube|drain|clip|suture|screw|port|electrode|wire|device|material|valve"
+    action: drop
+  # abdominal 'no solid or cystic mass' (or a round atelectasis) typed lung_cyst_or_bulla
+  - {finding_type: lung_cyst_or_bulla, evidence_not: "lung|pulmon|bull|bleb", action: drop}
+  - {finding_type: lung_cyst_or_bulla, evidence: "abdom|atelect", action: drop}
+  # 'the left kidney / thyroid lobe was not observed (operated)': an absent organ, not a No
+  - finding_type: [thyroid_abnormality, kidney_lesion, kidney_stone, spleen_abnormality, adrenal_lesion]
+    evidence: "operat|ectom|agenes|not (observed|visualized|seen) in the (left |right )?(\\w+ ){1,2}(lodge|site)|^\\W*(the )?(left |right )?(\\w+ ){1,5}(was|were|is|are) not (observed|visualized|seen)\\W*$"
+    action: drop
+
+finding_rules:
+  # crazy paving = ground-glass + interlobular septal thickening (543 units without it)
+  - {finding_type: [ground_glass_opacity, consolidation, lung_opacity], evidence: "crazy[- ]?paving", action: add, to: interlobular_septal_thickening}
+  # fibroatelectasis = fibrotic sequela + atelectasis (524 units without atelectasis)
+  - {finding_type: pulmonary_fibrotic_sequela, evidence: "fibro-?atelect", action: add, to: atelectasis}
+  # honeycombing / reticular densities typed pulmonary_fibrotic_sequela only
+  - {finding_type: pulmonary_fibrotic_sequela, evidence: "honeycomb|reticul", action: add, to: reticulation}
+  # 'ectasia in the bronchial structures' typed airway_abnormality
+  - {finding_type: airway_abnormality, evidence: "bronchiect|\\bectas|bronchiol\\w*[ei]ctas|bronectas|bronch\\w*[^.]{0,30}dilat", action: add, to: bronchiectasis}
+  # 'bronchial wall thickening' typed airway_abnormality
+  - {finding_type: airway_abnormality, evidence: "peribronch|bronch\\w*[^.]{0,20}wall[^.]{0,20}thick|wall thick\\w*[^.]{0,30}bronch", action: add, to: peribronchial_thickening}
+  # small / non-pathological lymph nodes = no lymphadenopathy there; not when the short axis
+  # exceeds 10 mm (352 such nodes in train: enlarged by the usual CT cut-off)
+  - {finding_type: lymph_node_not_enlarged, max_short_axis_mm: 10, action: negate, to: lymphadenopathy}
+
+# Hold out a fraction of the display names below for validation (0 = all in train).
+display_holdout: {fraction: 0.0, seed: 0}
+
+# Display names, filled into {finding}. Write them so that "Does this CT show any {finding}?" and
+# "How severe is the {finding}?" both read well (singular, no article).
+# A random name of the requested split is drawn for each question and each answer option.
+display:
+  medical_material: [medical device, implanted medical material]
+  arterial_wall_calcification: [arterial wall calcification, atherosclerotic calcification, vascular calcification]
+  cardiomegaly: [cardiomegaly, enlarged heart, increased cardiac size]
+  pericardial_effusion: [pericardial effusion, fluid in the pericardial space]
+  coronary_artery_wall_calcification: [coronary artery calcification, coronary artery wall calcification]
+  hiatal_hernia: [hiatal hernia, hiatus hernia]
+  lymphadenopathy: [lymphadenopathy, enlarged lymph node, pathologically enlarged lymph node]
+  emphysema: [emphysema, emphysematous change]
+  atelectasis: [atelectasis, atelectatic change]
+  lung_nodule: [lung nodule, pulmonary nodule]
+  lung_opacity: [lung opacity, parenchymal density increase, pulmonary infiltration]
+  pulmonary_fibrotic_sequela: [pulmonary fibrotic sequela, fibrotic scarring of the lung]
+  pleural_effusion: [pleural effusion, fluid in the pleural space]
+  mosaic_attenuation_pattern: [mosaic attenuation pattern, mosaic attenuation]
+  peribronchial_thickening: [peribronchial thickening, bronchial wall thickening]
+  consolidation: [consolidation, consolidative opacity]
+  bronchiectasis: [bronchiectasis, bronchial dilatation]
+  interlobular_septal_thickening: [interlobular septal thickening, septal thickening]
+  ground_glass_opacity: [ground-glass opacity, ground-glass density]
+  reticulation: [reticulation, reticular pattern]
+  lung_mass: [lung mass, pulmonary mass]
+  lung_cyst_or_bulla: [lung cyst or bulla, pulmonary cyst or bulla]
+  pneumothorax: [pneumothorax, air in the pleural space]
+  pleural_thickening: [pleural thickening, thickened pleura]
+  pericardial_thickening: [pericardial thickening, thickened pericardium]
+  lymph_node_not_enlarged: [non-enlarged lymph node, lymph node of normal size]
+  aortic_dilatation: [aortic dilatation, dilated aorta]
+  pulmonary_artery_dilatation: [pulmonary artery dilatation, dilated pulmonary artery]
+  airway_abnormality: [airway abnormality, tracheobronchial abnormality]
+  esophageal_abnormality: [esophageal abnormality, abnormality of the esophagus]
+  thyroid_abnormality: [thyroid abnormality, thyroid lesion]
+  thymic_tissue: [residual thymic tissue, thymic tissue]
+  breast_or_chest_wall_abnormality: [breast or chest wall abnormality, chest wall or breast lesion]
+  degenerative_spine_changes: [degenerative spine change, spinal degenerative change]
+  fracture: [fracture, bone fracture]
+  bone_lesion: [bone lesion, osseous lesion]
+  hepatic_steatosis: [hepatic steatosis, fatty liver]
+  liver_lesion: [liver lesion, hepatic lesion]
+  gallbladder_stone: [gallbladder stone, cholelithiasis]
+  kidney_lesion: [kidney lesion, renal lesion]
+  kidney_stone: [kidney stone, renal calculus]
+  adrenal_lesion: [adrenal lesion, adrenal nodule]
+  spleen_abnormality: [spleen abnormality, splenic abnormality]
+  post_surgical_change: [post-surgical change, postoperative change]
+  infection: [sign of infection, infectious process]

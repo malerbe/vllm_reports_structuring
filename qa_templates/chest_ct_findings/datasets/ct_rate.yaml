@@ -1,0 +1,50 @@
+# CT-RATE overlay of the chest_ct_findings template set, loaded by CTRATEGenerator (generator
+# name ct_rate). Other datasets do not get these changes. See docs/qa/templates.md#dataset-overlays.
+#
+#   concepts:  {key: value}             each key replaces the concepts.yaml key
+#   templates: {template_id: {key: v}}  each key replaces the template's key; null drops the template
+#   sampling:  {...}                    merged into sampling.yaml
+
+concepts:
+  # "Not mentioned" = No (closed world). A finding is in this list when (1) a radiologist reliably
+  # reports it when seen, (2) it is well defined and (3) its region is always in a chest CT field
+  # of view. Clinical judgment (2026-10-28), to be reviewed by a radiologist. Every No made this way
+  # carries the closed_world flag (sampling_config.flag_weights.closed_world).
+  closed_world: [
+    # lung
+    lung_nodule, lung_mass, lung_opacity, consolidation, ground_glass_opacity, atelectasis,
+    emphysema, bronchiectasis, peribronchial_thickening, interlobular_septal_thickening,
+    mosaic_attenuation_pattern, pulmonary_fibrotic_sequela, reticulation, pneumothorax,
+    # pleura
+    pleural_effusion, pleural_thickening,
+    # heart and vessels
+    cardiomegaly, pericardial_effusion, pericardial_thickening, coronary_artery_wall_calcification,
+    arterial_wall_calcification, aortic_dilatation, pulmonary_artery_dilatation,
+    # mediastinum
+    lymphadenopathy, hiatal_hernia, esophageal_abnormality, airway_abnormality,
+    # bone, devices
+    bone_lesion, fracture, medical_material,
+  ]
+  # Conditional closed world: the upper abdomen is only partly in the field and less looked at;
+  # "not mentioned" = No only when the report says something about the organ elsewhere (and has
+  # no `other` finding there). Degenerative changes are often left out, except in reports that
+  # state 'bone structures are natural' (4.9% of them describe degeneration vs 27.6% overall).
+  # Not in either list (silence = unknown): thymic_tissue, thyroid_abnormality,
+  # breast_or_chest_wall_abnormality, post_surgical_change, lung_cyst_or_bulla.
+  closed_world_if:
+    hepatic_steatosis: {regions: [liver]}
+    liver_lesion: {regions: [liver]}
+    gallbladder_stone: {regions: [gallbladder]}
+    kidney_lesion: {regions: [kidney]}
+    kidney_stone: {regions: [kidney]}
+    spleen_abnormality: {regions: [spleen]}
+    adrenal_lesion: {regions: [adrenal_gland]}
+    degenerative_spine_changes: {regions: [bone], evidence: "bone structures[^.]{0,60}\\b(natural|normal)\\b"}
+
+templates:
+  # moderate (142) and severe (177) are rare in CT-RATE: one ordered level "moderate or severe"
+  score_severity:
+    answer:
+      field: severity
+      map: {severe: moderate}
+      options: {minimal: minimal, mild: mild, moderate: "moderate or severe"}

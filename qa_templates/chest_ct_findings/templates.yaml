@@ -1,0 +1,146 @@
+# Question templates for the chest_ct_findings exports. See docs/qa/templates.md.
+#
+#   id         unique name (also the key of sampling_config.templates)
+#   qtype      noul (Yes/No) | choice (one answer) | score (one answer, ordered options)
+#   builder    presence | presence_side | field | bins | present_among_negated (rsx/qa/builders.py)
+#   where      filter on the builder's source table (columns: finding_type, region, laterality,
+#              lobe, severity, change, size_mm_max, size_measure, count, ...)
+#   answer     builder parameters: options ({value: label}, in score order), field, map, edges, labels
+#   phrasings  {finding} = concept display name; {side} for presence_side.
+#              A phrasing can be {text: ..., split: heldout} to force it into the held-out set.
+
+# Fraction of the phrasings of each template held out for validation (hash of the text, stable).
+phrasing_holdout: {fraction: 0.2, seed: 0}
+noul_options: ["No", "Yes"]
+
+templates:
+  # ------------------------------------------------------------------ noul
+  - id: noul_presence
+    qtype: noul
+    builder: presence  # Yes = finding present, No = explicit negation (not mentioned: no question)
+    phrasings:
+      - "Does this CT show any {finding}?"
+      - "Is there any {finding} on this scan?"
+      - "Is there evidence of {finding}?"
+      - "Does the scan show signs of {finding}?"
+      - "Can any {finding} be seen on this chest CT?"
+
+  - id: noul_presence_side
+    qtype: noul
+    builder: presence_side
+    where:
+      finding_type: [lung_nodule, lung_mass, lung_opacity, consolidation, ground_glass_opacity,
+                     atelectasis, bronchiectasis, emphysema, pulmonary_fibrotic_sequela,
+                     lung_cyst_or_bulla, pleural_effusion, pleural_thickening, pneumothorax,
+                     kidney_lesion, kidney_stone, adrenal_lesion, breast_or_chest_wall_abnormality]
+    answer:
+      sides: {right: right, left: left}
+    phrasings:
+      - "Is there any {finding} on the {side} side?"
+      - "Does the {side} side show any {finding}?"
+      - "Is there evidence of {finding} on the {side}?"
+
+  # ------------------------------------------------------------------ choice
+  - id: choice_laterality
+    qtype: choice
+    builder: field
+    answer:
+      field: laterality
+      options: {right: "right side", left: "left side", bilateral: "both sides"}
+    phrasings:
+      - "On which side is the {finding}?"
+      - "Which side is affected by the {finding}?"
+      - "What is the laterality of the {finding}?"
+
+  - id: choice_lobe
+    qtype: choice
+    builder: field
+    where: {region: [lung]}
+    answer:
+      field: lobe
+      map: {lingula: left_upper_lobe}
+      options:
+        right_upper_lobe: right upper lobe
+        right_middle_lobe: right middle lobe
+        right_lower_lobe: right lower lobe
+        left_upper_lobe: left upper lobe
+        left_lower_lobe: left lower lobe
+    phrasings:
+      - "In which lobe is the {finding} located?"
+      - "Which lobe contains the {finding}?"
+      - "Which pulmonary lobe is affected by the {finding}?"
+
+  - id: choice_which_present
+    qtype: choice
+    builder: present_among_negated  # 1 present finding + 3 findings negated in the same report
+    n_options: 4
+    phrasings:
+      - "Which of the following findings is present on this CT?"
+      - "Which one of these findings can be seen on the scan?"
+      - "Which of the following is found in this chest CT?"
+
+  # ------------------------------------------------------------------ score (options in order)
+  - id: score_severity
+    qtype: score
+    builder: field
+    answer:
+      field: severity
+      options: {minimal: minimal, mild: mild, moderate: moderate, severe: severe}
+    phrasings:
+      - "How severe is the {finding}?"
+      - "What is the degree of the {finding}?"
+      - "How would you grade the {finding}?"
+
+  - id: score_count
+    qtype: score
+    builder: field
+    where:
+      finding_type: [lung_nodule, lung_mass, lung_cyst_or_bulla, liver_lesion, kidney_lesion,
+                     kidney_stone, gallbladder_stone, adrenal_lesion, bone_lesion, fracture,
+                     lymphadenopathy]
+    answer:
+      field: count
+      options: {single: "one", multiple: "more than one"}
+    phrasings:
+      - "Is there one {finding} or more than one?"
+      - "Is the {finding} single or multiple?"
+      - "How many instances of {finding} are there: one or several?"
+
+  - id: score_nodule_size
+    qtype: score
+    builder: bins
+    where: {finding_type: [lung_nodule, lung_mass]}
+    answer:
+      field: size_mm_max
+      edges: [4, 6, 8, 15, 30]
+      labels: ["less than 4 mm", "4 to 6 mm", "6 to 8 mm", "8 to 15 mm", "15 to 30 mm", "30 mm or more"]
+    phrasings:
+      - "What is the size of the largest {finding}?"
+      - "How large is the biggest {finding}?"
+      - "What is the maximal diameter of the largest {finding}?"
+
+  - id: score_effusion_thickness
+    qtype: score
+    builder: bins
+    where: {finding_type: [pleural_effusion], size_measure: [thickness]}
+    answer:
+      field: size_mm_max
+      edges: [10, 20, 40, 60]
+      labels: ["less than 10 mm", "10 to 20 mm", "20 to 40 mm", "40 to 60 mm", "60 mm or more"]
+    phrasings:
+      - "What is the maximal thickness of the {finding}?"
+      - "How thick is the {finding} at its thickest point?"
+      - "How large is the {finding}, measured as its maximal thickness?"
+
+  - id: score_aortic_diameter
+    qtype: score
+    builder: bins
+    where: {finding_type: [aortic_dilatation]}
+    answer:
+      field: size_mm_max
+      edges: [40, 45, 50]
+      labels: ["less than 40 mm", "40 to 45 mm", "45 to 50 mm", "50 mm or more"]
+    phrasings:
+      - "What is the maximal diameter of the dilated aorta?"
+      - "How wide is the dilated aorta at its widest point?"
+      - "What is the largest measured diameter of the thoracic aorta?"

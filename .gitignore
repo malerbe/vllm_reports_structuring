@@ -7,3 +7,26 @@ runs/
 .ruff_cache/
 *.sif
 *.partial
+
+# data and outputs (may hold CT-RATE report text): keep them under runs/ or outside the repo
+*.parquet
+*.jsonl
+*.csv
+*.pkl
+*.npy
+*.npz
+*.nii
+*.nii.gz
+*.log
+
+# tools and editors
+site/
+.ipynb_checkpoints/
+*.ipynb
+.mypy_cache/
+.coverage
+htmlcov/
+.env
+.DS_Store
+.vscode/
+.idea/

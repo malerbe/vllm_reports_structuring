@@ -252,6 +252,73 @@ def _cmd_feeders(args) -> int:
     return 0
 
 
+def _qa_generator(args):
+    from .qa import get_generator
+
+    gen = get_generator(args.dataset)(args.qa_templates)
+    return gen.connect_structured_report(args.exports)
+
+
+def _cmd_qa_stats(args) -> int:
+    import pandas as pd
+
+    gen = _qa_generator(args)
+    with pd.option_context("display.width", 250, "display.max_rows", None):
+        print(json.dumps(gen.describe(), indent=2))
+        print(gen.summary().to_string(index=False))
+        if args.by_concept:
+            table = gen.stats_table()
+            if args.template:
+                table = table[table["template_id"].isin(args.template)]
+            print(table.to_string(index=False))
+    if args.out:
+        gen.stats_table().to_csv(args.out, index=False)
+        print(f"wrote {args.out}")
+    return 0
+
+
+def _cmd_qa_preview(args) -> int:
+    import numpy as np
+
+    gen = _qa_generator(args)
+    config = {"phrasings": args.phrasings}
+    rng = np.random.default_rng(args.seed)
+    items = args.item or list(rng.choice(gen.items, args.n_items, replace=False))
+    for item in items:
+        matches = gen.resolve(item)
+        print(
+            f"===== {item}"
+            + (f"  ({len(matches)} items, shared report)" if len(matches) > 1 else "")
+        )
+        for qa in gen.sample_qa_from_item(item, args.k, config, rng):
+            opts = " | ".join(f"[{o}]" if i == qa.answer else o for i, o in enumerate(qa.options))
+            flags = f"  flags={','.join(qa.flags)}" if qa.flags else ""
+            print(f"{qa.qtype:<6} {qa.template_id}: {qa.question}\n       {opts}{flags}")
+            if args.evidence:
+                print(f"       evidence: {qa.evidence}")
+    return 0
+
+
+def _cmd_qa_blind(args) -> int:
+    from .qa.diagnostics import blind_baseline
+
+    gen = _qa_generator(args)
+    table = blind_baseline(gen, args.n_items, args.k, seed=args.seed, item_weights=args.weighted)
+    print(table.to_string(index=False))
+    return 0
+
+
+def _add_qa_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("exports", help="export folder of a run (runs/<template>/<model>/<run>/exports)")
+    p.add_argument("--dataset", "-d", default="ct_rate", help="generator (dataset) name")
+    p.add_argument(
+        "--qa-templates",
+        "-q",
+        default="chest_ct_findings",
+        help="Q/A template set (qa_templates/<name>) or folder",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="rsx", description="Structure radiology reports with vLLM."
@@ -309,6 +376,31 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("stats", help="summary of a run directory")
     p.add_argument("run_dir")
     p.set_defaults(func=_cmd_stats)
+
+    p = sub.add_parser("qa", help="question/answer generation from an export folder")
+    qa = p.add_subparsers(dest="qa_command", required=True)
+    p = qa.add_parser("stats", help="candidates per template (and concept) and answer")
+    _add_qa_args(p)
+    p.add_argument("--by-concept", action="store_true", help="also print per concept counts")
+    p.add_argument("--template", nargs="+", help="with --by-concept: only these templates")
+    p.add_argument("--out", help="write the per concept table to this CSV")
+    p.set_defaults(func=_cmd_qa_stats)
+    p = qa.add_parser("preview", help="sample and print Q/A (answer in [brackets])")
+    _add_qa_args(p)
+    p.add_argument("--item", nargs="+", help="item names or prefixes (default: random items)")
+    p.add_argument("--n-items", type=int, default=5, help="random items when --item is not given")
+    p.add_argument("--k", type=int, default=8, help="questions per item")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--phrasings", choices=["train", "heldout", "all"], default="train")
+    p.add_argument("--evidence", action="store_true", help="print the evidence of each answer")
+    p.set_defaults(func=_cmd_qa_preview)
+    p = qa.add_parser("blind", help="shortcut check: accuracy without the image, per template")
+    _add_qa_args(p)
+    p.add_argument("--n-items", type=int, default=20000)
+    p.add_argument("--k", type=int, default=8)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--weighted", action="store_true", help="draw items with item_weights()")
+    p.set_defaults(func=_cmd_qa_blind)
 
     sub.add_parser("models", help="registered models and download state").set_defaults(
         func=_cmd_models
